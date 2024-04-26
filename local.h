@@ -16,6 +16,8 @@
 #include <time.h>
 #include <sys/mman.h>
 #include <fcntl.h>
+#include <semaphore.h>
+#include <sys/stat.h>
 
 // Maximum values for simulation parameters
 #define MAX_CONTAINERS 300
@@ -25,6 +27,15 @@
 
 #define SHM_PLANES "/MEM1"
 #define SHM_SIZE 1024
+#define SHM_DATA "/MEM2"
+#define SHM_DATA_SIZE 512
+#define SEM_CONTAINERS "/SEM1"
+
+typedef struct
+{
+    int totalContainersDropped;
+    int cleectedContainers;
+} SharedData;
 
 // Structure to represent a flour container
 typedef struct
@@ -56,30 +67,7 @@ typedef struct
     int x_axis;                                // x-axis of the plane
 } cargoPlane;
 
-// Semaphore operations for acquiring and releasing semaphores
-void acquireSem(int semid, int semnum);
-void releaseSem(int semid, int semnum);
-
 // Signal handler for cargo plane operations
 void signalHandler(int sig);
-
-// Semaphore union as required by semctl
-union semun
-{
-    int val;               // Value for SETVAL
-    struct semid_ds *buf;  // Buffer for IPC_STAT, IPC_SET
-    unsigned short *array; // Array for GETALL, SETALL
-};
-
-// Sembuf structures for semaphore operations
-struct sembuf acquire = {0, -1, SEM_UNDO},
-              release = {0, 1, SEM_UNDO};
-
-// Define semaphore indices
-enum
-{
-    SEM_AVAILABLE,
-    SEM_FILLED
-};
 
 #endif // LOCAL_H

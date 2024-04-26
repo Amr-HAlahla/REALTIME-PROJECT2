@@ -16,3 +16,4 @@ run: parent cargoPlane
 clean:
 	@rm -f parent cargoPlane *.o
 	@sudo rm /run/shm/MEM1 2> /dev/null
+	@sudo rm /run/shm/MEM2 2> /dev/null

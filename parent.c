@@ -26,9 +26,19 @@ Config config;
 pid_t cargoPlanes[MAX_CARGOPLANES];
 int containersPerPlane[MAX_CARGOPLANES];
 
+int shmid_planes;
+int shmid_data;
+int *containers_shm;
+int *data_shm;
+sem_t *sem_containers;
+
 // Function Prototypes:
 void loadConfiguration(const char *, Config *);
 void initialize_cargo_plane();
+void initialize_shared_data();
+void setupSignals();
+void signalHandler(int sig);
+void craete_shm_sem();
 
 int main(int argc, char *argv[])
 {
@@ -38,6 +48,9 @@ int main(int argc, char *argv[])
         exit(EXIT_FAILURE);
     }
     loadConfiguration(argv[1], &config);
+    setupSignals();
+    create_shm_sem();
+    initialize_shared_data();
 
     pid_t pid;
     char arg1[10], arg2[10], arg3[10], arg4[10], arg5[10], arg6[10], arg7[10];
@@ -74,34 +87,121 @@ int main(int argc, char *argv[])
         }
     }
     sleep(5);
+    // printf("Sending SIGUSR1 to the first cargo plane\n");
     kill(cargoPlanes[0], SIGUSR1); // send SIGUSR1 to the first cargo plane
-    sleep(5);
-
-    // open planes shared memory
-    int shmid_planes = openSHM(SHM_PLANES, SHM_SIZE);
-    if (shmid_planes == -1)
-    {
-        perror("openSHM Parent Error");
-        exit(1);
-    }
-
-    // Map the shared memory segment to the address space of the process
-    int *planes_shm = (int *)mapSHM(shmid_planes, SHM_SIZE);
-    // read the containers from shared memory (One Container each time)
-    printf("Reading from shared memory:\n");
-    printf("Total Containers Dropped: %d\n", containersPerPlane[0]);
-    for (int i = 0; i < containersPerPlane[0]; i++)
-    {
-        FlourContainer *container = (FlourContainer *)planes_shm;
-        printf("Container ID: %d, Quantity: %d, Height: %d\n", container->container_id, container->quantity, container->height);
-        planes_shm += 3;
-    }
+    sleep(25);
+    raise(SIGUSR1);
     // Wait for all cargo planes to finish
     for (int i = 0; i < config.numCargoPlanes; i++)
     {
         waitpid(cargoPlanes[i], NULL, 0);
     }
     return 0;
+}
+
+void initialize_shared_data()
+{
+    SharedData *data = (SharedData *)data_shm;
+    data->totalContainersDropped = 0;
+    data->cleectedContainers = 0;
+}
+
+void signalHandler(int sig)
+{
+    if (sig == SIGUSR1)
+    {
+        if (sem_wait(sem_containers) == -1)
+        {
+            perror("sem_wait");
+            exit(1);
+        }
+        printf("Parent entered the critical section\n");
+        int totalContainersDropped = ((SharedData *)data_shm)->totalContainersDropped;
+        int cleectedContainers = ((SharedData *)data_shm)->cleectedContainers;
+        int *temp = containers_shm;
+        int i = 0;
+        printf("Total containers dropped: %d\n", totalContainersDropped);
+        // read containers of the first cargo plane from shared memory
+        while ((totalContainersDropped > 0) && (i < containersPerPlane[0]))
+        {
+            FlourContainer *ptr = (FlourContainer *)temp;
+            if (ptr->height != -1)
+            {
+                printf("Container %d has been collected at address %p\n", ptr->container_id, ptr);
+                printf("Quantity: %d and height: %d\n", ptr->quantity, ptr->height);
+                cleectedContainers++;
+                totalContainersDropped--;
+                ptr->height = -1;
+                i++;
+            }
+            // update the pointer to the next container
+            temp += sizeof(FlourContainer);
+        }
+        printf("After collection process, Total containers dropped: %d\n", totalContainersDropped);
+        // update shared data with the new values
+        ((SharedData *)data_shm)->totalContainersDropped = totalContainersDropped;
+        ((SharedData *)data_shm)->cleectedContainers = cleectedContainers;
+        if (sem_post(sem_containers) == -1)
+        {
+            perror("sem_post");
+            exit(1);
+        }
+        printf("Parent exited the critical section\n");
+        // closeSHM(containers_shm, SHM_SIZE);
+        // closeSHM(data_shm, SHM_DATA_SIZE);
+    }
+}
+
+void create_shm_sem()
+{
+    shmid_planes = openSHM(SHM_PLANES, SHM_SIZE);
+    if (shmid_planes == -1)
+    {
+        perror("openSHM Cargo Plane Error");
+        exit(1);
+    }
+    containers_shm = (int *)mapSHM(shmid_planes, SHM_SIZE);
+    if (containers_shm == NULL)
+    {
+        perror("mapSHM Cargo Plane Error");
+        exit(1);
+    }
+
+    shmid_data = openSHM(SHM_DATA, SHM_DATA_SIZE);
+    if (shmid_data == -1)
+    {
+        perror("openSHM Shared Data Error");
+        exit(1);
+    }
+    data_shm = (int *)mapSHM(shmid_data, SHM_DATA_SIZE);
+    if (data_shm == NULL)
+    {
+        perror("mapSHM Shared Data Error");
+        exit(1);
+    }
+
+    sem_containers = sem_open(SEM_CONTAINERS, O_CREAT | O_RDWR, 0666, 1);
+    if (sem_containers == SEM_FAILED)
+    {
+        perror("sem_open");
+        exit(1);
+    }
+
+    printf("Shared memory and semaphores created successfully\n");
+}
+
+void setupSignals()
+{
+    if (sigset(SIGUSR1, signalHandler) == SIG_ERR)
+    {
+        perror("signal");
+        exit(1);
+    }
+    if (sigset(SIGUSR2, signalHandler) == SIG_ERR)
+    {
+        perror("signal");
+        exit(1);
+    }
 }
 
 // Function to read configuration.txt
