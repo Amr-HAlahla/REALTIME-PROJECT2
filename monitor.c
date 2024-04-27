@@ -15,9 +15,9 @@ sem_t *sem_data;
 
 int totalContainersDropped = 0;
 
-int period = 10;        // Period for updating heights
+int period = 7;         // Period for updating heights
 int targetContainer;    // Container to be crashed
-int propThreshold = 20; // above threshold => crash the container
+int propThreshold = 30; // above threshold => crash the container
 /* above threshold meters => all the content of the container is damaged, and the container is removed
     below threshold meters => partial damage   */
 int damageThreshold = 65;
@@ -42,23 +42,26 @@ void updateHeights()
         perror("waitSEM");
         exit(1);
     }
+    // printf("MONITOR Process Passed sem_data\n");
     int totalContainersDropped = ((SharedData *)data_shm_ptr)->totalContainersDropped;
     if (sem_wait(sem_containers) == -1)
     {
         perror("waitSEM");
         exit(1);
     }
+    // printf("MONITOR Process Passed sem_containers\n");
     // choose a target container to crash (between 0 and totalContainersDropped)
-    targetContainer = rand() % totalContainersDropped;
     printf("\033[0;32mStart Monitoring...\n\033[0m");
     int *temp = cont_shm_ptr;
     int elements = 0;
-    while ((elements < totalContainersDropped))
+    printf("Total containers dropped = %d\n", totalContainersDropped);
+    targetContainer = rand() % (totalContainersDropped + 1);
+    printf("Target container %d\n", targetContainer);
+    while ((elements < totalContainersDropped) && totalContainersDropped > 0)
     {
         /* check if the container is the target container */
         if (elements == targetContainer)
         {
-            printf("Target container %d\n", targetContainer);
             FlourContainer *container = (FlourContainer *)temp;
             // generate a random prob number between 0 and 100
             int prob = rand() % 101;
@@ -99,7 +102,7 @@ void updateHeights()
         FlourContainer *container = (FlourContainer *)temp;
         if (container->height != 0 && container->quantity != 0)
         {
-            container->height -= 15;
+            container->height -= 10;
             if (container->height < 0)
             {
                 container->height = 0;
@@ -120,6 +123,7 @@ void updateHeights()
         exit(1);
     }
     printf("\033[0;32mEnd Monitoring...\n\033[0m");
+    fflush(stdout);
 }
 
 void signalHandler(int sig)
@@ -195,14 +199,14 @@ void open_shm_sem()
         exit(1);
     }
 
-    sem_containers = sem_open(SEM_CONTAINERS, O_CREAT | O_RDWR, 0666, 1);
+    sem_containers = sem_open(SEM_CONTAINERS, O_RDWR);
     if (sem_containers == SEM_FAILED)
     {
         perror("sem_open");
         exit(1);
     }
 
-    sem_data = sem_open(SEM_DATA, O_CREAT | O_RDWR, 0666, 1);
+    sem_data = sem_open(SEM_DATA, O_RDWR);
     if (sem_data == SEM_FAILED)
     {
         perror("sem_open");

@@ -20,19 +20,26 @@ typedef struct
     int collectingWorkerMartyrThreshold;
     int distributingWorkerMartyrThreshold;
     int familyStarvationDeathThreshold;
+    int WORKER_MIN_ENERGY;
+    int WORKER_MAX_ENERGY;
+    int WORKER_ENERGY_PER_TRIP;
 } Config;
 
 Config config;
-pid_t cargoPlanes[MAX_CARGOPLANES];
+pid_t *cargoPlanes;
 pid_t monitoringProcess;
-int containersPerPlane[MAX_CARGOPLANES];
+pid_t *collectingCommittees;
+int *containersPerPlane;
 
 int shmid_planes;
-int shmid_data;
 int *containers_shm;
-int *data_shm;
 sem_t *sem_containers;
+int shmid_data;
+int *data_shm;
 sem_t *sem_data;
+int safe_shmid;
+int *safe_shm_ptr;
+sem_t *sem_safe;
 
 // Function Prototypes:
 void loadConfiguration(const char *, Config *);
@@ -51,6 +58,10 @@ int main(int argc, char *argv[])
     }
     srand(time(NULL) ^ (getpid() << 16)); // Seed random generator based on planeID
     loadConfiguration(argv[1], &config);
+    // dynamically allocate memory for cargo planes and collecting committees
+    cargoPlanes = (pid_t *)malloc(config.numCargoPlanes * sizeof(pid_t));
+    collectingCommittees = (pid_t *)malloc(config.numCollectingCommittees * sizeof(pid_t));
+    containersPerPlane = (int *)malloc(config.numCargoPlanes * sizeof(int));
     setupSignals();
     create_shm_sem();
     initialize_shared_data();
@@ -90,6 +101,11 @@ int main(int argc, char *argv[])
         }
     }
     sleep(2);
+    for (int i = 0; i < config.numCargoPlanes; i++)
+    {
+        kill(cargoPlanes[i], SIGUSR1); // Start dropping containers
+    }
+    sleep(1);
     monitoringProcess = fork();
     if (monitoringProcess == -1)
     {
@@ -102,12 +118,59 @@ int main(int argc, char *argv[])
         perror("execl");
         exit(1);
     }
-    sleep(5);
-    kill(monitoringProcess, SIGUSR1); // Start monitoring
-    for (int i = 0; i < config.numCargoPlanes; i++)
+    sleep(1);
+    // create collecting committees
+    for (int i = 0; i < config.numCollectingCommittees; i++)
     {
-        kill(cargoPlanes[i], SIGUSR1); // Start dropping containers
+        pid = fork();
+        if (pid == -1)
+        {
+            perror("fork");
+            exit(1);
+        }
+        if (pid == 0)
+        {
+            int committee_id = i;
+            int committee_size = config.workersPerCommittee;
+            int min_energy = config.WORKER_MIN_ENERGY;
+            int max_energy = config.WORKER_MAX_ENERGY;
+            sprintf(arg1, "%d", committee_id);
+            sprintf(arg2, "%d", committee_size);
+            sprintf(arg3, "%d", min_energy);
+            sprintf(arg4, "%d", max_energy);
+            execl("./collectorsCommittee", "collectorsCommittee", arg1, arg2, arg3, arg4, NULL);
+            perror("execl");
+            exit(1);
+        }
+        else if (pid > 0)
+        {
+            collectingCommittees[i] = pid;
+        }
     }
+    // print semaphores values
+    // printf("=============================\n");
+    // int sem_value;
+    // if (sem_getvalue(sem_containers, &sem_value) == -1)
+    // {
+    //     perror("sem_getvalue");
+    //     exit(1);
+    // }
+    // printf("Semaphore value: %d\n", sem_value);
+    // if (sem_getvalue(sem_data, &sem_value) == -1)
+    // {
+    //     perror("sem_getvalue");
+    //     exit(1);
+    // }
+    // printf("Semaphore value: %d\n", sem_value);
+    // if (sem_getvalue(sem_safe, &sem_value) == -1)
+    // {
+    //     perror("sem_getvalue");
+    //     exit(1);
+    // }
+    // printf("Semaphore value: %d\n", sem_value);
+    // printf("=============================\n");
+    sleep(2);
+    kill(monitoringProcess, SIGALRM); // Start monitoring
     // Wait for all cargo planes to finish
     for (int i = 0; i < config.numCargoPlanes; i++)
     {
@@ -133,6 +196,7 @@ void initialize_shared_data()
         perror("sem_post");
         exit(1);
     }
+    printf("Shared data initialized successfully\n");
 }
 
 void signalHandler(int sig)
@@ -231,15 +295,35 @@ void create_shm_sem()
         exit(1);
     }
 
-    sem_containers = sem_open(SEM_CONTAINERS, O_CREAT | O_RDWR, 0666, 1);
+    safe_shmid = openSHM(SHM_SAFE, SHM_SAFE_SIZE);
+    if (safe_shmid == -1)
+    {
+        perror("openSHM Safe Error");
+        exit(1);
+    }
+    safe_shm_ptr = (int *)mapSHM(safe_shmid, SHM_SAFE_SIZE);
+    if (safe_shm_ptr == NULL)
+    {
+        perror("mapSHM Safe Error");
+        exit(1);
+    }
+
+    sem_containers = sem_open(SEM_CONTAINERS, O_CREAT | O_EXCL | O_RDWR, 0666, 1);
     if (sem_containers == SEM_FAILED)
     {
         perror("sem_open");
         exit(1);
     }
 
-    sem_data = sem_open(SEM_DATA, O_CREAT | O_RDWR, 0666, 1);
+    sem_data = sem_open(SEM_DATA, O_CREAT | O_EXCL | O_RDWR, 0666, 1);
     if (sem_data == SEM_FAILED)
+    {
+        perror("sem_open");
+        exit(1);
+    }
+
+    sem_safe = sem_open(SEM_SAFE, O_CREAT | O_EXCL | O_RDWR, 0666, 1);
+    if (sem_safe == SEM_FAILED)
     {
         perror("sem_open");
         exit(1);
@@ -253,6 +337,12 @@ void create_shm_sem()
     }
     printf("Semaphore value: %d\n", sem_value);
     if (sem_getvalue(sem_data, &sem_value) == -1)
+    {
+        perror("sem_getvalue");
+        exit(1);
+    }
+    printf("Semaphore value: %d\n", sem_value);
+    if (sem_getvalue(sem_safe, &sem_value) == -1)
     {
         perror("sem_getvalue");
         exit(1);
@@ -332,6 +422,12 @@ void loadConfiguration(const char *filename, Config *config)
                 config->distributingWorkerMartyrThreshold = value;
             else if (strcmp(key, "FAMILY_STARVATION_DEATH_THRESHOLD") == 0)
                 config->familyStarvationDeathThreshold = value;
+            else if (strcmp(key, "WORKER_MIN_ENERGY") == 0)
+                config->WORKER_MIN_ENERGY = value;
+            else if (strcmp(key, "WORKER_MAX_ENERGY") == 0)
+                config->WORKER_MAX_ENERGY = value;
+            else if (strcmp(key, "WORKER_ENERGY_PER_TRIP") == 0)
+                config->WORKER_ENERGY_PER_TRIP = value;
         }
     }
     fclose(file);

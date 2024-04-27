@@ -195,14 +195,14 @@ void open_shm_sem()
         exit(1);
     }
 
-    sem_containers = sem_open(SEM_CONTAINERS, O_CREAT | O_RDWR, 0666, 1);
+    sem_containers = sem_open(SEM_CONTAINERS, O_RDWR);
     if (sem_containers == SEM_FAILED)
     {
         perror("sem_open");
         exit(1);
     }
 
-    sem_data = sem_open(SEM_DATA, O_CREAT | O_RDWR, 0666, 1);
+    sem_data = sem_open(SEM_DATA, O_RDWR);
     if (sem_data == SEM_FAILED)
     {
         perror("sem_open");

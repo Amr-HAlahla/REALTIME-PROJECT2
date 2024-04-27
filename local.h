@@ -31,6 +31,17 @@
 #define SHM_DATA_SIZE 512
 #define SEM_CONTAINERS "/SEM1"
 #define SEM_DATA "/SEM2"
+#define SHM_SAFE "/MEM3"
+#define SHM_SAFE_SIZE 1024
+#define SEM_SAFE "/SEM3"
+
+typedef struct
+{
+    int committee_id;
+    int energy;
+    int alive;
+
+} Collecter;
 
 typedef struct
 {
