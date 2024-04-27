@@ -31,6 +31,7 @@ int shmid_data;
 int *containers_shm;
 int *data_shm;
 sem_t *sem_containers;
+sem_t *sem_data;
 
 // Function Prototypes:
 void loadConfiguration(const char *, Config *);
@@ -87,10 +88,10 @@ int main(int argc, char *argv[])
         }
     }
     sleep(5);
-    // printf("Sending SIGUSR1 to the first cargo plane\n");
-    kill(cargoPlanes[0], SIGUSR1); // send SIGUSR1 to the first cargo plane
-    sleep(25);
-    raise(SIGUSR1);
+    for (int i = 0; i < config.numCargoPlanes; i++)
+    {
+        kill(cargoPlanes[i], SIGUSR1); // Start dropping containers
+    }
     // Wait for all cargo planes to finish
     for (int i = 0; i < config.numCargoPlanes; i++)
     {
@@ -101,37 +102,56 @@ int main(int argc, char *argv[])
 
 void initialize_shared_data()
 {
+    if (sem_wait(sem_data) == -1)
+    {
+        perror("sem_wait");
+        exit(1);
+    }
     SharedData *data = (SharedData *)data_shm;
     data->totalContainersDropped = 0;
     data->cleectedContainers = 0;
+    data->numOfCargoPlanes = config.numCargoPlanes;
+    data->planesDropped = 0;
+    if (sem_post(sem_data) == -1)
+    {
+        perror("sem_post");
+        exit(1);
+    }
 }
 
 void signalHandler(int sig)
 {
     if (sig == SIGUSR1)
     {
+        if (sem_wait(sem_data) == -1)
+        {
+            perror("sem_wait");
+            exit(1);
+        }
+        int totalContainersDropped = ((SharedData *)data_shm)->totalContainersDropped;
+        int cleectedContainers = ((SharedData *)data_shm)->cleectedContainers;
+        printf("Parent Entered data critical section\n");
         if (sem_wait(sem_containers) == -1)
         {
             perror("sem_wait");
             exit(1);
         }
-        printf("Parent entered the critical section\n");
-        int totalContainersDropped = ((SharedData *)data_shm)->totalContainersDropped;
-        int cleectedContainers = ((SharedData *)data_shm)->cleectedContainers;
+        printf("Parent entered containers critical section\n");
+        printf("==========================================\n");
         int *temp = containers_shm;
         int i = 0;
         printf("Total containers dropped: %d\n", totalContainersDropped);
         // read containers of the first cargo plane from shared memory
-        while ((totalContainersDropped > 0) && (i < containersPerPlane[0]))
+        while ((totalContainersDropped > 0))
         {
-            FlourContainer *ptr = (FlourContainer *)temp;
-            if (ptr->height != -1)
+            if (((FlourContainer *)temp)->quantity != 0)
             {
-                printf("Container %d has been collected at address %p\n", ptr->container_id, ptr);
-                printf("Quantity: %d and height: %d\n", ptr->quantity, ptr->height);
+                printf("\033[0;32mContainer %d has been collected at address %p\n\033[0m", ((FlourContainer *)temp)->container_id, temp);
+                printf("\033[0;32mQuantity: %d and height: %d\n\033[0m", ((FlourContainer *)temp)->quantity, ((FlourContainer *)temp)->height);
                 cleectedContainers++;
                 totalContainersDropped--;
-                ptr->height = -1;
+                ((FlourContainer *)temp)->height = 0;
+                ((FlourContainer *)temp)->quantity = 0;
                 i++;
             }
             // update the pointer to the next container
@@ -142,6 +162,11 @@ void signalHandler(int sig)
         ((SharedData *)data_shm)->totalContainersDropped = totalContainersDropped;
         ((SharedData *)data_shm)->cleectedContainers = cleectedContainers;
         if (sem_post(sem_containers) == -1)
+        {
+            perror("sem_post");
+            exit(1);
+        }
+        if (sem_post(sem_data) == -1)
         {
             perror("sem_post");
             exit(1);
@@ -182,6 +207,13 @@ void create_shm_sem()
 
     sem_containers = sem_open(SEM_CONTAINERS, O_CREAT | O_RDWR, 0666, 1);
     if (sem_containers == SEM_FAILED)
+    {
+        perror("sem_open");
+        exit(1);
+    }
+
+    sem_data = sem_open(SEM_DATA, O_CREAT | O_RDWR, 0666, 1);
+    if (sem_data == SEM_FAILED)
     {
         perror("sem_open");
         exit(1);

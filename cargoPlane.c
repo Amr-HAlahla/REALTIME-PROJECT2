@@ -17,6 +17,7 @@ int *cont_shm_ptr;
 int data_shmid;
 int *data_shm_ptr;
 sem_t *sem_containers;
+sem_t *sem_data;
 int remainingContainers;
 int elementIndex = 0;
 
@@ -64,14 +65,32 @@ void signalHandler(int sig)
         // printf("Cargo Plane %d received SIGALRM\n", current_cargoPlane.plane_id);
         if (remainingContainers == 0)
         {
-            printf("Cargo Plane %d has dropped all containers\n", current_cargoPlane.plane_id);
-            // kill(getppid(), SIGUSR1);
-            // refillContainers();
-            // alaram(current_cargoPlane.dropFrequency); // wait for the next drop
+            printf("\033[0;32mCargo Plane %d has dropped all containers\033[0m\n", current_cargoPlane.plane_id);
+            // open data shared memory
+            if (sem_wait(sem_data) == -1)
+            {
+                perror("waitSEM");
+                exit(1);
+            }
+            int totalPlanes = ((SharedData *)data_shm_ptr)->numOfCargoPlanes;
+            int planesDropped = ((SharedData *)data_shm_ptr)->planesDropped;
+            planesDropped++;
+            ((SharedData *)data_shm_ptr)->planesDropped = planesDropped;
+            if (planesDropped == totalPlanes)
+            {
+                // all planes have dropped their containers
+                printf("\033[0;31mAll planes have dropped their containers\033[0m\n");
+                kill(getppid(), SIGUSR1);
+            }
+            if (sem_post(sem_data) == -1)
+            {
+                perror("signalSEM");
+                exit(1);
+            }
         }
         else
         {
-            // printf("Cargo Plane %d ready to drop a container\n", current_cargoPlane.plane_id);
+            current_cargoPlane.status = 1;
             dropContainers();
             alarm(current_cargoPlane.dropFrequency); // wait for the next drop
         }
@@ -81,6 +100,12 @@ void signalHandler(int sig)
 void dropContainers()
 {
     printf("Cargo Plane %d dropping a container\n", current_cargoPlane.plane_id);
+    if (sem_wait(sem_data) == -1)
+    {
+        perror("waitSEM");
+        exit(1);
+    }
+    int totalContainersDropped = ((SharedData *)data_shm_ptr)->totalContainersDropped;
     if (sem_wait(sem_containers) == -1)
     {
         perror("waitSEM");
@@ -88,7 +113,6 @@ void dropContainers()
     }
     printf("Cargo Plane %d locked SEM\n", current_cargoPlane.plane_id);
     // SharedData *sharedData = ;
-    int totalContainersDropped = ((SharedData *)data_shm_ptr)->totalContainersDropped;
     int *temp_ptr = cont_shm_ptr;
     elementIndex = 0;
     while ((((FlourContainer *)temp_ptr)->height != -1) && (totalContainersDropped > elementIndex))
@@ -101,16 +125,19 @@ void dropContainers()
     // printf("Total containers dropped: %d\n", totalContainersDropped);
     memcpy(temp_ptr, &current_cargoPlane.containers[numOfContainers - remainingContainers], sizeof(FlourContainer));
     remainingContainers--;
-    // update shared data
+
     ((SharedData *)data_shm_ptr)->totalContainersDropped = totalContainersDropped + 1;
+    if (sem_post(sem_data) == -1)
+    {
+        perror("signalSEM");
+        exit(1);
+    }
     if (sem_post(sem_containers) == -1)
     {
         perror("signalSEM");
         exit(1);
     }
-    printf("Cargo Plane %d unlocked SEM\n", current_cargoPlane.plane_id);
-    // closeSHM(temp_ptr, SHM_SIZE);
-    // closeSHM(sharedData, SHM_DATA_SIZE);
+    printf("Cargo Plane %d unlocked SEM's\n", current_cargoPlane.plane_id);
 }
 
 void open_shm_sem()
@@ -147,6 +174,13 @@ void open_shm_sem()
         perror("sem_open");
         exit(1);
     }
+
+    sem_data = sem_open(SEM_DATA, O_CREAT | O_RDWR, 0666, 1);
+    if (sem_data == SEM_FAILED)
+    {
+        perror("sem_open");
+        exit(1);
+    }
 }
 
 void initialize_cargo_plane()
@@ -155,7 +189,7 @@ void initialize_cargo_plane()
     current_cargoPlane.plane_pid = getpid();
     current_cargoPlane.plane_id = planeID;
     current_cargoPlane.numContainers = numOfContainers;
-    current_cargoPlane.status = -1;
+    current_cargoPlane.status = 0;
     current_cargoPlane.dropFrequency = rand() % (maxDropFreq - minDropFreq + 1) + minDropFreq;
     current_cargoPlane.valid = 1;
     current_cargoPlane.y_axis = rand() % (120 - 100 + 1) + 100;

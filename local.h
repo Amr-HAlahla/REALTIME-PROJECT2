@@ -30,11 +30,14 @@
 #define SHM_DATA "/MEM2"
 #define SHM_DATA_SIZE 512
 #define SEM_CONTAINERS "/SEM1"
+#define SEM_DATA "/SEM2"
 
 typedef struct
 {
     int totalContainersDropped;
     int cleectedContainers;
+    int numOfCargoPlanes;
+    int planesDropped;
 } SharedData;
 
 // Structure to represent a flour container
