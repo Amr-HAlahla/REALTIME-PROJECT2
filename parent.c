@@ -39,7 +39,7 @@ void initialize_cargo_plane();
 void initialize_shared_data();
 void setupSignals();
 void signalHandler(int sig);
-void craete_shm_sem();
+void create_shm_sem();
 
 int main(int argc, char *argv[])
 {
@@ -140,13 +140,19 @@ void signalHandler(int sig)
         printf("==========================================\n");
         int *temp = containers_shm;
         int i = 0;
+        int summation = 0;
+        for (int i = 0; i < config.numCargoPlanes; i++)
+        {
+            summation += containersPerPlane[i];
+        }
+        printf("Total containers dropped must be %d\n", summation);
         printf("Total containers dropped: %d\n", totalContainersDropped);
         // read containers of the first cargo plane from shared memory
         while ((totalContainersDropped > 0))
         {
             if (((FlourContainer *)temp)->quantity != 0)
             {
-                printf("\033[0;32mContainer %d has been collected at address %p\n\033[0m", ((FlourContainer *)temp)->container_id, temp);
+                printf("Container %d has been collected at address %p\n", ((FlourContainer *)temp)->container_id, temp);
                 printf("\033[0;32mQuantity: %d and height: %d\n\033[0m", ((FlourContainer *)temp)->quantity, ((FlourContainer *)temp)->height);
                 cleectedContainers++;
                 totalContainersDropped--;

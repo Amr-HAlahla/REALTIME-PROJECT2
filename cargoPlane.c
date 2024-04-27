@@ -20,6 +20,7 @@ sem_t *sem_containers;
 sem_t *sem_data;
 int remainingContainers;
 int elementIndex = 0;
+int refillTimes = 0;
 
 int main(int argc, char *argv[])
 {
@@ -65,40 +66,65 @@ void signalHandler(int sig)
         // printf("Cargo Plane %d received SIGALRM\n", current_cargoPlane.plane_id);
         if (remainingContainers == 0)
         {
-            printf("\033[0;32mCargo Plane %d has dropped all containers\033[0m\n", current_cargoPlane.plane_id);
-            // open data shared memory
-            if (sem_wait(sem_data) == -1)
+            if (refillTimes < 2)
             {
-                perror("waitSEM");
-                exit(1);
+                // refill the containers
+                int refillTime = rand() % (maxRefill - minRefill + 1) + minRefill;
+                printf("\033[0;31mCargo Plane %d has dropped all containers and will refill in %d seconds\033[0m\n",
+                       current_cargoPlane.plane_id, refillTime);
+                refillContainers();
+                refillTimes++;
+                alarm(refillTime);
             }
-            int totalPlanes = ((SharedData *)data_shm_ptr)->numOfCargoPlanes;
-            int planesDropped = ((SharedData *)data_shm_ptr)->planesDropped;
-            planesDropped++;
-            ((SharedData *)data_shm_ptr)->planesDropped = planesDropped;
-            if (planesDropped == totalPlanes)
+            else
             {
-                // all planes have dropped their containers
-                printf("\033[0;31mAll planes have dropped their containers\033[0m\n");
-                kill(getppid(), SIGUSR1);
-            }
-            if (sem_post(sem_data) == -1)
-            {
-                perror("signalSEM");
-                exit(1);
+                printf("\033[0;32mCargo Plane %d has dropped all containers\033[0m\n", current_cargoPlane.plane_id);
+                // open data shared memory
+                if (sem_wait(sem_data) == -1)
+                {
+                    perror("waitSEM");
+                    exit(1);
+                }
+                int totalPlanes = ((SharedData *)data_shm_ptr)->numOfCargoPlanes;
+                int planesDropped = ((SharedData *)data_shm_ptr)->planesDropped;
+                planesDropped++;
+                ((SharedData *)data_shm_ptr)->planesDropped = planesDropped;
+                if (planesDropped == totalPlanes)
+                {
+                    // all planes have dropped their containers
+                    printf("\033[0;31mAll planes have dropped their containers\033[0m\n");
+                    kill(getppid(), SIGUSR1);
+                }
+                if (sem_post(sem_data) == -1)
+                {
+                    perror("signalSEM");
+                    exit(1);
+                }
             }
         }
         else
         {
-            current_cargoPlane.status = 1;
             dropContainers();
             alarm(current_cargoPlane.dropFrequency); // wait for the next drop
         }
     }
 }
+void refillContainers()
+{
+    current_cargoPlane.status = 2;
+    remainingContainers = numOfContainers;
+    current_cargoPlane.y_axis = rand() % (120 - 100 + 1) + 100;
+    // initialize the arrays of containers
+    for (int i = 0; i < current_cargoPlane.numContainers; i++)
+    {
+        current_cargoPlane.containers[i].quantity = rand() % (100 - 15 + 1) + 15;
+        current_cargoPlane.containers[i].height = current_cargoPlane.y_axis;
+    }
+}
 
 void dropContainers()
 {
+    current_cargoPlane.status = 1;
     printf("Cargo Plane %d dropping a container\n", current_cargoPlane.plane_id);
     if (sem_wait(sem_data) == -1)
     {
@@ -115,7 +141,7 @@ void dropContainers()
     // SharedData *sharedData = ;
     int *temp_ptr = cont_shm_ptr;
     elementIndex = 0;
-    while ((((FlourContainer *)temp_ptr)->height != -1) && (totalContainersDropped > elementIndex))
+    while ((((FlourContainer *)temp_ptr)->quantity != 0) && (totalContainersDropped > elementIndex))
     {
         elementIndex++;
         temp_ptr += sizeof(FlourContainer);
