@@ -141,6 +141,7 @@ void dropContainers()
     // SharedData *sharedData = ;
     int *temp_ptr = cont_shm_ptr;
     elementIndex = 0;
+    /* quantity = 0 means the container is either collected or damaged */
     while ((((FlourContainer *)temp_ptr)->quantity != 0) && (totalContainersDropped > elementIndex))
     {
         elementIndex++;

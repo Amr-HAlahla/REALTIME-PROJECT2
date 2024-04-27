@@ -49,6 +49,7 @@ int main(int argc, char *argv[])
         fprintf(stderr, "Usage: %s <configuration_file_path>\n", argv[0]);
         exit(EXIT_FAILURE);
     }
+    srand(time(NULL) ^ (getpid() << 16)); // Seed random generator based on planeID
     loadConfiguration(argv[1], &config);
     setupSignals();
     create_shm_sem();
@@ -162,6 +163,7 @@ void signalHandler(int sig)
         {
             summation += containersPerPlane[i];
         }
+        summation *= 3;
         printf("Total containers dropped must be %d\n", summation);
         printf("Total containers dropped: %d\n", totalContainersDropped);
         // read containers of the first cargo plane from shared memory
@@ -242,6 +244,19 @@ void create_shm_sem()
         exit(1);
     }
 
+    int sem_value;
+    if (sem_getvalue(sem_containers, &sem_value) == -1)
+    {
+        perror("sem_getvalue");
+        exit(1);
+    }
+    printf("Semaphore value: %d\n", sem_value);
+    if (sem_getvalue(sem_data, &sem_value) == -1)
+    {
+        perror("sem_getvalue");
+        exit(1);
+    }
+    printf("Semaphore value: %d\n", sem_value);
     printf("Shared memory and semaphores created successfully\n");
 }
 

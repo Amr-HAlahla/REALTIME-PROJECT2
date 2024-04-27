@@ -15,10 +15,15 @@ sem_t *sem_data;
 
 int totalContainersDropped = 0;
 
-int period = 10; // Period for updating heights
-
+int period = 10;        // Period for updating heights
+int targetContainer;    // Container to be crashed
+int propThreshold = 15; // above threshold => crash the container
+/* above 50 meters => all the content of the container is damaged, and the container is removed
+    below 50 meters => partial damage   */
+int damageThreshold = 50;
 int main(int argc, char *argv[])
 {
+    srand(time(NULL) ^ (getpid() << 16)); // Seed random generator based on planeID
     setupSignals();
     open_shm_sem();
     while (1)
@@ -43,13 +48,56 @@ void updateHeights()
         perror("waitSEM");
         exit(1);
     }
+    // choose a target container to crash (between 0 and totalContainersDropped)
+    targetContainer = rand() % totalContainersDropped;
     printf("\033[0;32mStart Monitoring...\n\033[0m");
     int *temp = cont_shm_ptr;
     int elements = 0;
     while ((elements < totalContainersDropped))
     {
+        /* check if the container is the target container */
+        if (elements == targetContainer)
+        {
+            printf("Target container %d\n", targetContainer);
+            FlourContainer *container = (FlourContainer *)temp;
+            // generate a random prob number between 0 and 100
+            int prob = rand() % 101;
+            if (prob < propThreshold)
+            {
+                printf("\033[0;31mProb = %d, the container %d will be crashed\n\033[0m", prob, container->container_id);
+                // the target is crashed, check the height
+                if (container->height > damageThreshold)
+                {
+                    // the container is totally damaged
+                    container->quantity = 0;
+                    printf("\033[0;31mContainer %d at height %d and has been crashed totally: quantity = %d\n\033[0m",
+                           container->container_id, container->height, container->quantity);
+                    ((SharedData *)data_shm_ptr)->totalContainersDropped--;
+                }
+                else
+                {
+                    // the container is partially damaged by a ration depends on its height
+                    int tempQuantity = container->quantity;
+                    // generate a ration between (1 and 100)% of the height
+                    float ratio = (container->height + 1) / 100.0;
+                    printf("Damage ratio = %0.2f\n", ratio);
+                    container->quantity = (int)container->quantity * (1 - ratio);
+                    printf("\033[0;31mContainer %d has been partially crashed: quantity from %d to %d\n\033[0m",
+                           container->container_id, tempQuantity, container->quantity);
+                    if (container->quantity == 0)
+                    {
+                        ((SharedData *)data_shm_ptr)->totalContainersDropped--;
+                    }
+                }
+            }
+            else
+            {
+                printf("Container %d is safe, prob = %d is greater than %d\n", container->container_id, prob, propThreshold);
+            }
+        }
+        // now update the height of the container
         FlourContainer *container = (FlourContainer *)temp;
-        if (container->height != 0)
+        if (container->height != 0 && container->quantity != 0)
         {
             container->height -= 15;
             if (container->height < 0)
