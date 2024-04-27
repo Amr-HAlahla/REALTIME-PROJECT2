@@ -74,7 +74,7 @@ void signalHandler(int sig)
                        current_cargoPlane.plane_id, refillTime);
                 refillContainers();
                 refillTimes++;
-                alarm(refillTime);
+                alarm(current_cargoPlane.dropFrequency);
             }
             else
             {
@@ -113,7 +113,7 @@ void refillContainers()
 {
     current_cargoPlane.status = 2;
     remainingContainers = numOfContainers;
-    current_cargoPlane.y_axis = rand() % (120 - 100 + 1) + 100;
+    current_cargoPlane.y_axis = rand() % (120 - 80 + 1) + 100;
     // initialize the arrays of containers
     for (int i = 0; i < current_cargoPlane.numContainers; i++)
     {
@@ -218,7 +218,7 @@ void initialize_cargo_plane()
     current_cargoPlane.status = 0;
     current_cargoPlane.dropFrequency = rand() % (maxDropFreq - minDropFreq + 1) + minDropFreq;
     current_cargoPlane.valid = 1;
-    current_cargoPlane.y_axis = rand() % (120 - 100 + 1) + 100;
+    current_cargoPlane.y_axis = rand() % (120 - 80 + 1) + 80;
     current_cargoPlane.x_axis = rand() % (100 - 10 + 1) + 10;
     // initialize the arrays of containers
     for (int i = 0; i < current_cargoPlane.numContainers; i++)

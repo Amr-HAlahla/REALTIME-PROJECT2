@@ -24,6 +24,7 @@ typedef struct
 
 Config config;
 pid_t cargoPlanes[MAX_CARGOPLANES];
+pid_t monitoringProcess;
 int containersPerPlane[MAX_CARGOPLANES];
 
 int shmid_planes;
@@ -87,7 +88,20 @@ int main(int argc, char *argv[])
             // printf("Cargo Plane %d created with %d containers\n", i + 1, numContainers);
         }
     }
+    monitoringProcess = fork();
+    if (monitoringProcess == -1)
+    {
+        perror("fork");
+        exit(1);
+    }
+    if (monitoringProcess == 0)
+    {
+        execl("./monitor", "monitor", NULL);
+        perror("execl");
+        exit(1);
+    }
     sleep(5);
+    kill(monitoringProcess, SIGUSR1); // Start monitoring
     for (int i = 0; i < config.numCargoPlanes; i++)
     {
         kill(cargoPlanes[i], SIGUSR1); // Start dropping containers
@@ -123,6 +137,9 @@ void signalHandler(int sig)
 {
     if (sig == SIGUSR1)
     {
+        // send TSTP signal to the monitoring process
+        kill(monitoringProcess, SIGTSTP);
+        sleep(1);
         if (sem_wait(sem_data) == -1)
         {
             perror("sem_wait");
