@@ -89,6 +89,7 @@ int main(int argc, char *argv[])
             // printf("Cargo Plane %d created with %d containers\n", i + 1, numContainers);
         }
     }
+    sleep(2);
     monitoringProcess = fork();
     if (monitoringProcess == -1)
     {

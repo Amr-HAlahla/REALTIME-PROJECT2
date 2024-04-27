@@ -17,10 +17,10 @@ int totalContainersDropped = 0;
 
 int period = 10;        // Period for updating heights
 int targetContainer;    // Container to be crashed
-int propThreshold = 15; // above threshold => crash the container
-/* above 50 meters => all the content of the container is damaged, and the container is removed
-    below 50 meters => partial damage   */
-int damageThreshold = 50;
+int propThreshold = 20; // above threshold => crash the container
+/* above threshold meters => all the content of the container is damaged, and the container is removed
+    below threshold meters => partial damage   */
+int damageThreshold = 65;
 int main(int argc, char *argv[])
 {
     srand(time(NULL) ^ (getpid() << 16)); // Seed random generator based on planeID
@@ -82,8 +82,8 @@ void updateHeights()
                     float ratio = (container->height + 1) / 100.0;
                     printf("Damage ratio = %0.2f\n", ratio);
                     container->quantity = (int)container->quantity * (1 - ratio);
-                    printf("\033[0;31mContainer %d has been partially crashed: quantity from %d to %d\n\033[0m",
-                           container->container_id, tempQuantity, container->quantity);
+                    printf("\033[0;31mContainer %d at height %d has been partially crashed: quantity from %d to %d\n\033[0m",
+                           container->container_id, container->height, tempQuantity, container->quantity);
                     if (container->quantity == 0)
                     {
                         ((SharedData *)data_shm_ptr)->totalContainersDropped--;
