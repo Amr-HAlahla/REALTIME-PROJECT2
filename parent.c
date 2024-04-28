@@ -40,6 +40,9 @@ sem_t *sem_data;
 int safe_shmid;
 int *safe_shm_ptr;
 sem_t *sem_safe;
+int shmid_landed;
+int *landed_shm;
+sem_t *sem_landed;
 
 // Function Prototypes:
 void loadConfiguration(const char *, Config *);
@@ -147,28 +150,6 @@ int main(int argc, char *argv[])
             collectingCommittees[i] = pid;
         }
     }
-    // print semaphores values
-    // printf("=============================\n");
-    // int sem_value;
-    // if (sem_getvalue(sem_containers, &sem_value) == -1)
-    // {
-    //     perror("sem_getvalue");
-    //     exit(1);
-    // }
-    // printf("Semaphore value: %d\n", sem_value);
-    // if (sem_getvalue(sem_data, &sem_value) == -1)
-    // {
-    //     perror("sem_getvalue");
-    //     exit(1);
-    // }
-    // printf("Semaphore value: %d\n", sem_value);
-    // if (sem_getvalue(sem_safe, &sem_value) == -1)
-    // {
-    //     perror("sem_getvalue");
-    //     exit(1);
-    // }
-    // printf("Semaphore value: %d\n", sem_value);
-    // printf("=============================\n");
     sleep(2);
     kill(monitoringProcess, SIGALRM); // Start monitoring
     // Wait for all cargo planes to finish
@@ -191,6 +172,8 @@ void initialize_shared_data()
     data->cleectedContainers = 0;
     data->numOfCargoPlanes = config.numCargoPlanes;
     data->planesDropped = 0;
+    data->totalLandedContainers = 0;
+    data->numOfCrashedContainers = 0;
     if (sem_post(sem_data) == -1)
     {
         perror("sem_post");
@@ -212,7 +195,8 @@ void signalHandler(int sig)
             exit(1);
         }
         int totalContainersDropped = ((SharedData *)data_shm)->totalContainersDropped;
-        int cleectedContainers = ((SharedData *)data_shm)->cleectedContainers;
+        int totalLandedContainers = ((SharedData *)data_shm)->totalLandedContainers;
+        int totalCrashedContainers = ((SharedData *)data_shm)->numOfCrashedContainers;
         printf("Parent Entered data critical section\n");
         if (sem_wait(sem_containers) == -1)
         {
@@ -221,36 +205,51 @@ void signalHandler(int sig)
         }
         printf("Parent entered containers critical section\n");
         printf("==========================================\n");
-        int *temp = containers_shm;
-        int i = 0;
         int summation = 0;
         for (int i = 0; i < config.numCargoPlanes; i++)
         {
             summation += containersPerPlane[i];
         }
         summation *= 3;
-        printf("Total containers dropped must be %d\n", summation);
-        printf("Total containers dropped: %d\n", totalContainersDropped);
+        int *temp = containers_shm;
+        printf("Total Containers %d\n", summation);
+        printf("Containers dropped: %d\n", totalContainersDropped);
+        printf("Landed containers: %d\n", totalLandedContainers);
+        printf("Crashed containers: %d\n", totalCrashedContainers);
         // read containers of the first cargo plane from shared memory
+        printf("\033[0;33mContainers on the Air:\n\033[0m");
         while ((totalContainersDropped > 0))
         {
             if (((FlourContainer *)temp)->quantity != 0)
             {
                 printf("Container %d has been collected at address %p\n", ((FlourContainer *)temp)->container_id, temp);
                 printf("\033[0;32mQuantity: %d and height: %d\n\033[0m", ((FlourContainer *)temp)->quantity, ((FlourContainer *)temp)->height);
-                cleectedContainers++;
                 totalContainersDropped--;
-                ((FlourContainer *)temp)->height = 0;
-                ((FlourContainer *)temp)->quantity = 0;
-                i++;
+                // ((FlourContainer *)temp)->height = 0;
+                // ((FlourContainer *)temp)->quantity = 0;
             }
             // update the pointer to the next container
             temp += sizeof(FlourContainer);
         }
-        printf("After collection process, Total containers dropped: %d\n", totalContainersDropped);
+        printf("/|/|/|/|/|/|/|/|/|/|/|/|/|/|/|/|/|/|/|/|/|/|/|/|\n");
+        printf("\033[0;33mContainer in the Lande Area:\n\033[0m");
+        temp = landed_shm;
+        while (totalLandedContainers > 0)
+        {
+            if (((FlourContainer *)temp)->quantity != 0)
+            {
+                // printf("Container %d has been collected at address %p\n", ((FlourContainer *)temp)->container_id, temp);
+                printf("\033[0;32mQuantity: %d and height: %d\n\033[0m", ((FlourContainer *)temp)->quantity, ((FlourContainer *)temp)->height);
+                totalLandedContainers--;
+                // ((FlourContainer *)temp)->height = 0;
+                // ((FlourContainer *)temp)->quantity = 0;
+            }
+            // update the pointer to the next container
+            temp += sizeof(FlourContainer);
+        }
+        printf("\033[0;33mAfter collection process, Total containers dropped: %d\n\033[0m", totalContainersDropped);
         // update shared data with the new values
         ((SharedData *)data_shm)->totalContainersDropped = totalContainersDropped;
-        ((SharedData *)data_shm)->cleectedContainers = cleectedContainers;
         if (sem_post(sem_containers) == -1)
         {
             perror("sem_post");
@@ -308,6 +307,19 @@ void create_shm_sem()
         exit(1);
     }
 
+    shmid_landed = openSHM(SHM_LANDED, SHM_LANDED_SIZE);
+    if (shmid_landed == -1)
+    {
+        perror("openSHM Landed Error");
+        exit(1);
+    }
+    landed_shm = (int *)mapSHM(shmid_landed, SHM_LANDED_SIZE);
+    if (landed_shm == NULL)
+    {
+        perror("mapSHM Landed Error");
+        exit(1);
+    }
+
     sem_containers = sem_open(SEM_CONTAINERS, O_CREAT | O_EXCL | O_RDWR, 0666, 1);
     if (sem_containers == SEM_FAILED)
     {
@@ -329,25 +341,38 @@ void create_shm_sem()
         exit(1);
     }
 
+    sem_landed = sem_open(SEM_LANDED, O_CREAT | O_EXCL | O_RDWR, 0666, 1);
+    if (sem_landed == SEM_FAILED)
+    {
+        perror("sem_open");
+        exit(1);
+    }
+
     int sem_value;
     if (sem_getvalue(sem_containers, &sem_value) == -1)
     {
         perror("sem_getvalue");
         exit(1);
     }
-    printf("Semaphore value: %d\n", sem_value);
+    printf("Continaers Semaphore value: %d\n", sem_value);
     if (sem_getvalue(sem_data, &sem_value) == -1)
     {
         perror("sem_getvalue");
         exit(1);
     }
-    printf("Semaphore value: %d\n", sem_value);
+    printf("Data Semaphore value: %d\n", sem_value);
     if (sem_getvalue(sem_safe, &sem_value) == -1)
     {
         perror("sem_getvalue");
         exit(1);
     }
-    printf("Semaphore value: %d\n", sem_value);
+    printf("Safe Area Semaphore value: %d\n", sem_value);
+    if (sem_getvalue(sem_landed, &sem_value) == -1)
+    {
+        perror("sem_getvalue");
+        exit(1);
+    }
+    printf("Landed Containers Semaphore value: %d\n", sem_value);
     printf("Shared memory and semaphores created successfully\n");
 }
 

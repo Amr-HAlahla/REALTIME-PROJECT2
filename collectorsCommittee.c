@@ -4,20 +4,25 @@
 void setupSignals();
 void signalHandler(int sig);
 void open_shm_sem();
+void collectContainers();
 
+// shared data
 int data_shmid;
 int *data_shm_ptr;
 sem_t *sem_data;
-int cont_shmid;
-int *cont_shm_ptr;
-sem_t *sem_containers;
+// safe area
 int safe_shmid;
 int *safe_shm_ptr;
 sem_t *sem_safe;
+// landed area
+int landed_shmid;
+int *landed_shm_ptr;
+sem_t *sem_landed;
 
 int committee_id;
 int committee_size;
 Collecter *collecters;
+int period = 5;
 
 int main(int argc, char *argv[])
 {
@@ -43,13 +48,83 @@ int main(int argc, char *argv[])
         collecters[i] = *collecter;
     }
     printf("Collectors Committee %d has been created\n", committee_id);
-    // setupSignals();
+    setupSignals();
     open_shm_sem();
     while (1)
     {
         // sleep(5);
         // alarm(period);
         pause();
+    }
+}
+
+void collectContainers()
+{
+    // read the containers in the landed area
+    if (sem_wait(sem_landed) == -1)
+    {
+        perror("waitSEM");
+        exit(1);
+    }
+    if (sem_wait(sem_data) == -1)
+    {
+        perror("waitSEM");
+        exit(1);
+    }
+    printf("\033[0;32mCollectors Committee %d is collecting containers...\n\033[0m", committee_id);
+    int totalLandedContainers = ((SharedData *)data_shm_ptr)->totalLandedContainers;
+    int collectedContainers = ((SharedData *)data_shm_ptr)->cleectedContainers;
+    if (totalLandedContainers == 0)
+    {
+        printf("\033[0;32mNo containers to collect\n\033[0m");
+    }
+    int landedElements = 0;
+    int *temp = landed_shm_ptr;
+    while (landedElements < totalLandedContainers)
+    {
+        FlourContainer *container = (FlourContainer *)temp;
+        if (container->quantity > 0)
+        {
+            printf("\033[0;32mContainer %d has been collected\n\033[0m", container->container_id);
+            printf("Container %d has %d quantity\n", container->container_id, container->quantity);
+            collectedContainers++;
+            container->quantity = 0;
+            totalLandedContainers--;
+        }
+        landedElements++;
+        temp += sizeof(FlourContainer);
+    }
+    ((SharedData *)data_shm_ptr)->cleectedContainers = collectedContainers;
+    ((SharedData *)data_shm_ptr)->totalLandedContainers = totalLandedContainers;
+    if (sem_post(sem_data) == -1)
+    {
+        perror("signalSEM");
+        exit(1);
+    }
+    if (sem_post(sem_landed) == -1)
+    {
+        perror("signalSEM");
+        exit(1);
+    }
+    printf("\033[0;32mEnd Collecting...\n\033[0m");
+    fflush(stdout);
+}
+
+void signalHandler(int sig)
+{
+    if (sig == SIGALRM)
+    {
+        collectContainers();
+        alarm(period);
+    }
+}
+
+void setupSignals()
+{
+    if (sigset(SIGALRM, signalHandler) == SIG_ERR)
+    {
+        perror("sigaction");
+        exit(1);
     }
 }
 
@@ -61,12 +136,12 @@ void open_shm_sem()
         perror("shm_open data");
         exit(1);
     }
-    if ((cont_shmid = shm_open(SHM_PLANES, O_RDWR, 0666)) == -1)
+    if ((safe_shmid = shm_open(SHM_SAFE, O_RDWR, 0666)) == -1)
     {
         perror("shm_open data");
         exit(1);
     }
-    if ((safe_shmid = shm_open(SHM_SAFE, O_RDWR, 0666)) == -1)
+    if ((landed_shmid = shm_open(SHM_LANDED, O_RDWR, 0666)) == -1)
     {
         perror("shm_open data");
         exit(1);
@@ -78,7 +153,7 @@ void open_shm_sem()
         perror("mmap");
         exit(1);
     }
-    if ((cont_shm_ptr = mmap(0, SHM_SIZE, PROT_READ | PROT_WRITE, MAP_SHARED, cont_shmid, 0)) == MAP_FAILED)
+    if ((landed_shm_ptr = mmap(0, SHM_LANDED_SIZE, PROT_READ | PROT_WRITE, MAP_SHARED, landed_shmid, 0)) == MAP_FAILED)
     {
         perror("mmap");
         exit(1);
@@ -95,7 +170,7 @@ void open_shm_sem()
         perror("sem_open");
         exit(1);
     }
-    if ((sem_containers = sem_open(SEM_CONTAINERS, O_RDWR)) == SEM_FAILED)
+    if ((sem_landed = sem_open(SEM_LANDED, O_RDWR)) == SEM_FAILED)
     {
         perror("sem_open");
         exit(1);

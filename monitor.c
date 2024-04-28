@@ -8,10 +8,13 @@ void open_shm_sem();
 
 int cont_shmid;
 int *cont_shm_ptr;
+sem_t *sem_containers;
 int data_shmid;
 int *data_shm_ptr;
-sem_t *sem_containers;
 sem_t *sem_data;
+int landed_shmid;
+int *landed_shm_ptr;
+sem_t *sem_landed;
 
 int totalContainersDropped = 0;
 
@@ -44,17 +47,20 @@ void updateHeights()
     }
     // printf("MONITOR Process Passed sem_data\n");
     int totalContainersDropped = ((SharedData *)data_shm_ptr)->totalContainersDropped;
+    int totalLandedContainers = ((SharedData *)data_shm_ptr)->totalLandedContainers;
+    int numOfCrashedContainers = ((SharedData *)data_shm_ptr)->numOfCrashedContainers;
     if (sem_wait(sem_containers) == -1)
     {
         perror("waitSEM");
         exit(1);
     }
-    // printf("MONITOR Process Passed sem_containers\n");
     // choose a target container to crash (between 0 and totalContainersDropped)
     printf("\033[0;32mStart Monitoring...\n\033[0m");
     int *temp = cont_shm_ptr;
     int elements = 0;
     printf("Total containers dropped = %d\n", totalContainersDropped);
+    printf("Total landed containers = %d\n", totalLandedContainers);
+    printf("Total crashed containers = %d\n", numOfCrashedContainers);
     targetContainer = rand() % (totalContainersDropped + 1);
     printf("Target container %d\n", targetContainer);
     while ((elements < totalContainersDropped) && totalContainersDropped > 0)
@@ -76,6 +82,7 @@ void updateHeights()
                     printf("\033[0;31mContainer %d at height %d and has been crashed totally: quantity = %d\n\033[0m",
                            container->container_id, container->height, container->quantity);
                     ((SharedData *)data_shm_ptr)->totalContainersDropped--;
+                    ((SharedData *)data_shm_ptr)->numOfCrashedContainers++;
                 }
                 else
                 {
@@ -90,6 +97,7 @@ void updateHeights()
                     if (container->quantity == 0)
                     {
                         ((SharedData *)data_shm_ptr)->totalContainersDropped--;
+                        ((SharedData *)data_shm_ptr)->numOfCrashedContainers++;
                     }
                 }
             }
@@ -98,6 +106,7 @@ void updateHeights()
                 printf("Container %d is safe, prob = %d is greater than %d\n", container->container_id, prob, propThreshold);
             }
         }
+
         // now update the height of the container
         FlourContainer *container = (FlourContainer *)temp;
         if (container->height != 0 && container->quantity != 0)
@@ -108,6 +117,36 @@ void updateHeights()
                 container->height = 0;
             }
             printf("Height of the container %d updated to %d\n", container->container_id, container->height);
+        }
+        if (container->height == 0 && container->quantity != 0)
+        {
+            printf("\033[0;31mThe container %d has reached the ground, will be moved to the landed area\n\033[0m",
+                   container->container_id);
+            // move the container into the landed area
+            if (sem_wait(sem_landed) == -1)
+            {
+                perror("sem_wait");
+                exit(1);
+            }
+            int *landed_temp = landed_shm_ptr;
+            int landed_elements = 0;
+            while ((landed_elements < totalLandedContainers) && (totalLandedContainers > 0) &&
+                   (((FlourContainer *)landed_temp)->quantity != 0))
+            {
+                landed_temp += sizeof(FlourContainer);
+                landed_elements++;
+            }
+            // write the container into the landed area and remove it from the containers area
+            printf("Container %d moved to the landed area\n", container->container_id);
+            memcpy(landed_temp, container, sizeof(FlourContainer));
+            container->quantity = 0;
+            ((SharedData *)data_shm_ptr)->totalLandedContainers++;
+            ((SharedData *)data_shm_ptr)->totalContainersDropped--;
+            if (sem_post(sem_landed) == -1)
+            {
+                perror("sem_post");
+                exit(1);
+            }
         }
         temp += sizeof(FlourContainer);
         elements++;
@@ -199,6 +238,19 @@ void open_shm_sem()
         exit(1);
     }
 
+    landed_shmid = openSHM(SHM_LANDED, SHM_LANDED_SIZE);
+    if (landed_shmid == -1)
+    {
+        perror("openSHM Landed Error");
+        exit(1);
+    }
+    landed_shm_ptr = (int *)mapSHM(landed_shmid, SHM_LANDED_SIZE);
+    if (landed_shm_ptr == NULL)
+    {
+        perror("mapSHM Landed Error");
+        exit(1);
+    }
+
     sem_containers = sem_open(SEM_CONTAINERS, O_RDWR);
     if (sem_containers == SEM_FAILED)
     {
@@ -208,6 +260,13 @@ void open_shm_sem()
 
     sem_data = sem_open(SEM_DATA, O_RDWR);
     if (sem_data == SEM_FAILED)
+    {
+        perror("sem_open");
+        exit(1);
+    }
+
+    sem_landed = sem_open(SEM_LANDED, O_RDWR);
+    if (sem_landed == SEM_FAILED)
     {
         perror("sem_open");
         exit(1);

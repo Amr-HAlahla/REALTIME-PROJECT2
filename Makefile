@@ -24,6 +24,8 @@ clean:
 	@sudo rm /run/shm/MEM1 2> /dev/null
 	@sudo rm /run/shm/MEM2 2> /dev/null
 	@sudo rm /run/shm/MEM3 2> /dev/null
+	@sudo rm /run/shm/MEM4 2> /dev/null
 	@sudo rm /run/shm/sem.SEM1 2> /dev/null
 	@sudo rm /run/shm/sem.SEM2 2> /dev/null
 	@sudo rm /run/shm/sem.SEM3 2> /dev/null
+	@sudo rm /run/shm/sem.SEM4 2> /dev/null

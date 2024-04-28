@@ -34,6 +34,9 @@
 #define SHM_SAFE "/MEM3"
 #define SHM_SAFE_SIZE 1024
 #define SEM_SAFE "/SEM3"
+#define SHM_LANDED "/MEM4"
+#define SHM_LANDED_SIZE 1024
+#define SEM_LANDED "/SEM4"
 
 typedef struct
 {
@@ -49,6 +52,8 @@ typedef struct
     int cleectedContainers;
     int numOfCargoPlanes;
     int planesDropped;
+    int totalLandedContainers;
+    int numOfCrashedContainers;
 } SharedData;
 
 // Structure to represent a flour container
