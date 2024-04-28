@@ -125,35 +125,26 @@ void refillContainers()
 void dropContainers()
 {
     current_cargoPlane.status = 1;
-    printf("Cargo Plane %d dropping a container\n", current_cargoPlane.plane_id);
+    // printf("Cargo Plane %d dropping a container\n", current_cargoPlane.plane_id);
     if (sem_wait(sem_data) == -1)
     {
         perror("waitSEM");
         exit(1);
     }
-    int totalContainersDropped = ((SharedData *)data_shm_ptr)->totalContainersDropped;
+    // printf("Cargo Plane %d locked DATA SEM\n", current_cargoPlane.plane_id);
     if (sem_wait(sem_containers) == -1)
     {
         perror("waitSEM");
         exit(1);
     }
-    printf("Cargo Plane %d locked SEM\n", current_cargoPlane.plane_id);
-    // SharedData *sharedData = ;
+    int totalContainersDropped = ((SharedData *)data_shm_ptr)->totalContainersDropped;
     int *temp_ptr = cont_shm_ptr;
-    elementIndex = 0;
-    /* quantity = 0 means the container is either collected or damaged */
-    while ((((FlourContainer *)temp_ptr)->quantity != 0) && (totalContainersDropped > elementIndex))
-    {
-        elementIndex++;
-        temp_ptr += sizeof(FlourContainer);
-    }
-    // printf("Cargo Plane %d Opened SHM\n", current_cargoPlane.plane_id);
-    printf("Writing container %d to at address %p\n", current_cargoPlane.containers[numOfContainers - remainingContainers].container_id, temp_ptr);
-    // printf("Total containers dropped: %d\n", totalContainersDropped);
+    temp_ptr += sizeof(FlourContainer) * totalContainersDropped;
+    printf("Writing container %d to CONTAINERS SHM at %p\n", totalContainersDropped, temp_ptr);
     memcpy(temp_ptr, &current_cargoPlane.containers[numOfContainers - remainingContainers], sizeof(FlourContainer));
     remainingContainers--;
-
-    ((SharedData *)data_shm_ptr)->totalContainersDropped = totalContainersDropped + 1;
+    ((SharedData *)data_shm_ptr)->totalContainersDropped++;
+    printf("\033[0;32mCargo Plane %d has dropped a container\033[0m\n", current_cargoPlane.plane_id);
     if (sem_post(sem_data) == -1)
     {
         perror("signalSEM");
@@ -164,7 +155,6 @@ void dropContainers()
         perror("signalSEM");
         exit(1);
     }
-    printf("Cargo Plane %d unlocked SEM's\n", current_cargoPlane.plane_id);
 }
 
 void open_shm_sem()
@@ -228,6 +218,9 @@ void initialize_cargo_plane()
         container.container_id = i + 1;
         container.quantity = rand() % (100 - 15 + 1) + 15;
         container.height = current_cargoPlane.y_axis;
+        container.collected = 0; /* 0 => not collected, 1 => collected */
+        container.landed = 0;    /* 0 => not landed, 1 => landed */
+        container.crahshed = 0;  /* 0 => not crashed, 1 => crashed */
         current_cargoPlane.containers[i] = container;
     }
 }

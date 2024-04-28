@@ -22,7 +22,7 @@ sem_t *sem_landed;
 int committee_id;
 int committee_size;
 Collecter *collecters;
-int period = 5;
+int period = 12;
 
 int main(int argc, char *argv[])
 {
@@ -61,52 +61,54 @@ int main(int argc, char *argv[])
 void collectContainers()
 {
     // read the containers in the landed area
-    if (sem_wait(sem_landed) == -1)
-    {
-        perror("waitSEM");
-        exit(1);
-    }
     if (sem_wait(sem_data) == -1)
     {
         perror("waitSEM");
         exit(1);
     }
-    printf("\033[0;32mCollectors Committee %d is collecting containers...\n\033[0m", committee_id);
+    // printf("Committee %d Locked Data SEM\n", committee_id);
+    if (sem_wait(sem_landed) == -1)
+    {
+        perror("waitSEM");
+        exit(1);
+    }
     int totalLandedContainers = ((SharedData *)data_shm_ptr)->totalLandedContainers;
     int collectedContainers = ((SharedData *)data_shm_ptr)->cleectedContainers;
-    if (totalLandedContainers == 0)
+    int crashedContainers = ((SharedData *)data_shm_ptr)->numOfCrashedContainers;
+    int droppedContainers = ((SharedData *)data_shm_ptr)->totalContainersDropped;
+    int maxContainers = ((SharedData *)data_shm_ptr)->maxContainers;
+    // printf("Committee %d Locked Landed SEM\n", committee_id);
+    printf("\033[0;34mCollectors Committee %d is collecting containers...\n\033[0m", committee_id);
+    if ((totalLandedContainers - collectedContainers) == 0)
     {
-        printf("\033[0;32mNo containers to collect\n\033[0m");
+        printf("\033[0;31mNo containers to collect\n\033[0m");
     }
-    int landedElements = 0;
-    int *temp = landed_shm_ptr;
-    while (landedElements < totalLandedContainers)
+    else
     {
+        int *temp = landed_shm_ptr;
+        temp += sizeof(FlourContainer) * collectedContainers;
         FlourContainer *container = (FlourContainer *)temp;
-        if (container->quantity > 0)
-        {
-            printf("\033[0;32mContainer %d has been collected\n\033[0m", container->container_id);
-            printf("Container %d has %d quantity\n", container->container_id, container->quantity);
-            collectedContainers++;
-            container->quantity = 0;
-            totalLandedContainers--;
-        }
-        landedElements++;
-        temp += sizeof(FlourContainer);
+        container->collected = 1;
+        ((SharedData *)data_shm_ptr)->cleectedContainers++;
+        printf("\033[0;32mContainer %d has been collected\n\033[0m", ((SharedData *)data_shm_ptr)->cleectedContainers);
+        printf("State: | Quantity = %d | Height = %d\n | Crahsed = %d| Landed = %d | Collected = %d\n",
+               container->quantity, container->height, container->crahshed, container->landed, container->collected);
+        printf("\033[0;31mAt end of collection, Landed = %d | Collected = %d\n\033[0m",
+               ((SharedData *)data_shm_ptr)->totalLandedContainers, ((SharedData *)data_shm_ptr)->cleectedContainers);
     }
-    ((SharedData *)data_shm_ptr)->cleectedContainers = collectedContainers;
-    ((SharedData *)data_shm_ptr)->totalLandedContainers = totalLandedContainers;
     if (sem_post(sem_data) == -1)
     {
         perror("signalSEM");
         exit(1);
     }
+    // printf("Committee %d Unlocked Data SEM\n", committee_id);
     if (sem_post(sem_landed) == -1)
     {
         perror("signalSEM");
         exit(1);
     }
-    printf("\033[0;32mEnd Collecting...\n\033[0m");
+    // printf("Committee %d Unlocked Landed SEM\n", committee_id);
+    printf("\033[0;34mEnd Collecting...\n\033[0m");
     fflush(stdout);
 }
 
@@ -116,6 +118,46 @@ void signalHandler(int sig)
     {
         collectContainers();
         alarm(period);
+    }
+    else if (sig == SIGUSR1)
+    {
+        alarm(period);
+    }
+    else if (sig == SIGTSTP)
+    {
+        // // unlink the shared memory and semaphores
+        // if (shm_unlink(SHM_DATA) == -1)
+        // {
+        //     perror("shm_unlink data");
+        //     exit(1);
+        // }
+        // if (shm_unlink(SHM_SAFE) == -1)
+        // {
+        //     perror("shm_unlink safe");
+        //     exit(1);
+        // }
+        // if (shm_unlink(SHM_LANDED) == -1)
+        // {
+        //     perror("shm_unlink landed");
+        //     exit(1);
+        // }
+        // if (sem_close(sem_data) == -1)
+        // {
+        //     perror("sem_close data");
+        //     exit(1);
+        // }
+        // if (sem_close(sem_safe) == -1)
+        // {
+        //     perror("sem_close safe");
+        //     exit(1);
+        // }
+        // if (sem_close(sem_landed) == -1)
+        // {
+        //     perror("sem_close landed");
+        //     exit(1);
+        // }
+        printf("Exiting committee\n");
+        exit(0);
     }
 }
 

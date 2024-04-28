@@ -152,6 +152,11 @@ int main(int argc, char *argv[])
     }
     sleep(2);
     kill(monitoringProcess, SIGALRM); // Start monitoring
+    sleep(5);
+    for (int i = 0; i < config.numCollectingCommittees; i++)
+    {
+        kill(collectingCommittees[i], SIGALRM); // Start collecting
+    }
     // Wait for all cargo planes to finish
     for (int i = 0; i < config.numCargoPlanes; i++)
     {
@@ -174,6 +179,7 @@ void initialize_shared_data()
     data->planesDropped = 0;
     data->totalLandedContainers = 0;
     data->numOfCrashedContainers = 0;
+    data->maxContainers = config.maxContainersPerPlane;
     if (sem_post(sem_data) == -1)
     {
         perror("sem_post");
@@ -189,6 +195,12 @@ void signalHandler(int sig)
         // send TSTP signal to the monitoring process
         kill(monitoringProcess, SIGTSTP);
         sleep(1);
+        // send TSTP signal to all collecting committees
+        for (int i = 0; i < config.numCollectingCommittees; i++)
+        {
+            kill(collectingCommittees[i], SIGTSTP);
+        }
+        sleep(1);
         if (sem_wait(sem_data) == -1)
         {
             perror("sem_wait");
@@ -197,8 +209,20 @@ void signalHandler(int sig)
         int totalContainersDropped = ((SharedData *)data_shm)->totalContainersDropped;
         int totalLandedContainers = ((SharedData *)data_shm)->totalLandedContainers;
         int totalCrashedContainers = ((SharedData *)data_shm)->numOfCrashedContainers;
+        int collectedContainers = ((SharedData *)data_shm)->cleectedContainers;
         printf("Parent Entered data critical section\n");
+        printf("------------------------------------------\n");
         if (sem_wait(sem_containers) == -1)
+        {
+            perror("sem_wait");
+            exit(1);
+        }
+        if (sem_wait(sem_landed) == -1)
+        {
+            perror("sem_wait");
+            exit(1);
+        }
+        if (sem_wait(sem_safe) == -1)
         {
             perror("sem_wait");
             exit(1);
@@ -216,40 +240,36 @@ void signalHandler(int sig)
         printf("Containers dropped: %d\n", totalContainersDropped);
         printf("Landed containers: %d\n", totalLandedContainers);
         printf("Crashed containers: %d\n", totalCrashedContainers);
+        printf("Collected containers: %d\n", collectedContainers);
         // read containers of the first cargo plane from shared memory
         printf("\033[0;33mContainers on the Air:\n\033[0m");
+        int index = 0;
         while ((totalContainersDropped > 0))
         {
-            if (((FlourContainer *)temp)->quantity != 0)
-            {
-                printf("Container %d has been collected at address %p\n", ((FlourContainer *)temp)->container_id, temp);
-                printf("\033[0;32mQuantity: %d and height: %d\n\033[0m", ((FlourContainer *)temp)->quantity, ((FlourContainer *)temp)->height);
-                totalContainersDropped--;
-                // ((FlourContainer *)temp)->height = 0;
-                // ((FlourContainer *)temp)->quantity = 0;
-            }
+            printf("\033[0;32mContainer %d: | Quantity=  %d | height = %d | Collected = %d | Landed = %d | Crahsed = %d | \n\033[0m",
+                   index, ((FlourContainer *)temp)->quantity, ((FlourContainer *)temp)->height, ((FlourContainer *)temp)->collected, ((FlourContainer *)temp)->landed, ((FlourContainer *)temp)->crahshed);
+            totalContainersDropped--;
+            index++;
             // update the pointer to the next container
             temp += sizeof(FlourContainer);
         }
         printf("/|/|/|/|/|/|/|/|/|/|/|/|/|/|/|/|/|/|/|/|/|/|/|/|\n");
         printf("\033[0;33mContainer in the Lande Area:\n\033[0m");
         temp = landed_shm;
+        index = 0;
         while (totalLandedContainers > 0)
         {
-            if (((FlourContainer *)temp)->quantity != 0)
-            {
-                // printf("Container %d has been collected at address %p\n", ((FlourContainer *)temp)->container_id, temp);
-                printf("\033[0;32mQuantity: %d and height: %d\n\033[0m", ((FlourContainer *)temp)->quantity, ((FlourContainer *)temp)->height);
-                totalLandedContainers--;
-                // ((FlourContainer *)temp)->height = 0;
-                // ((FlourContainer *)temp)->quantity = 0;
-            }
-            // update the pointer to the next container
+            printf("\033[0;32mContainer %d: | Quantity=  %d | height = %d | Collected = %d | Landed = %d | Crahsed = %d | \n\033[0m",
+                   index, ((FlourContainer *)temp)->quantity, ((FlourContainer *)temp)->height, ((FlourContainer *)temp)->collected, ((FlourContainer *)temp)->landed, ((FlourContainer *)temp)->crahshed);
+            totalLandedContainers--;
             temp += sizeof(FlourContainer);
         }
-        printf("\033[0;33mAfter collection process, Total containers dropped: %d\n\033[0m", totalContainersDropped);
         // update shared data with the new values
         ((SharedData *)data_shm)->totalContainersDropped = totalContainersDropped;
+        printf("/|/|/|/|/|/|/|/|/|/|/|/|/|/|/|/|/|/|/|/|/|/|/|/|\n");
+        printf("\033[0;33mAfter collection process:\n\033[0m", totalContainersDropped);
+        printf("Total containers dropped: %d\n Total landed containers: %d\n Total crashed containers: %d\n Total collected containers: %d\n",
+               totalContainersDropped, totalLandedContainers, totalCrashedContainers, collectedContainers);
         if (sem_post(sem_containers) == -1)
         {
             perror("sem_post");
@@ -260,7 +280,29 @@ void signalHandler(int sig)
             perror("sem_post");
             exit(1);
         }
+        if (sem_post(sem_safe) == -1)
+        {
+            perror("sem_post");
+            exit(1);
+        }
+        if (sem_post(sem_landed) == -1)
+        {
+            perror("sem_post");
+            exit(1);
+        }
         printf("Parent exited the critical section\n");
+        // kill all child processes
+        for (int i = 0; i < config.numCargoPlanes; i++)
+        {
+            kill(cargoPlanes[i], SIGKILL);
+        }
+        for (int i = 0; i < config.numCollectingCommittees; i++)
+        {
+            kill(collectingCommittees[i], SIGKILL);
+        }
+        kill(monitoringProcess, SIGKILL);
+        printf("All child processes killed, parent process will exit now\n");
+        exit(0);
         // closeSHM(containers_shm, SHM_SIZE);
         // closeSHM(data_shm, SHM_DATA_SIZE);
     }

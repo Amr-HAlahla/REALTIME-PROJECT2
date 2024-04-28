@@ -18,7 +18,7 @@ sem_t *sem_landed;
 
 int totalContainersDropped = 0;
 
-int period = 7;         // Period for updating heights
+int period = 5;         // Period for updating heights
 int targetContainer;    // Container to be crashed
 int propThreshold = 30; // above threshold => crash the container
 /* above threshold meters => all the content of the container is damaged, and the container is removed
@@ -39,128 +39,140 @@ int main(int argc, char *argv[])
 
 void updateHeights()
 {
-    // printf("MONITOR Process Enetered updateHeights\n");
     if (sem_wait(sem_data) == -1)
     {
         perror("waitSEM");
         exit(1);
     }
-    // printf("MONITOR Process Passed sem_data\n");
     int totalContainersDropped = ((SharedData *)data_shm_ptr)->totalContainersDropped;
     int totalLandedContainers = ((SharedData *)data_shm_ptr)->totalLandedContainers;
     int numOfCrashedContainers = ((SharedData *)data_shm_ptr)->numOfCrashedContainers;
+    int collectedContainers = ((SharedData *)data_shm_ptr)->cleectedContainers;
     if (sem_wait(sem_containers) == -1)
     {
         perror("waitSEM");
         exit(1);
     }
+    // printf("Monitor locked CONTAINERS SEM\n");
+    if (sem_wait(sem_landed) == -1)
+    {
+        perror("sem_wait");
+        exit(1);
+    }
+    // printf("Monitor locked Landed SEM\n");
     // choose a target container to crash (between 0 and totalContainersDropped)
     printf("\033[0;32mStart Monitoring...\n\033[0m");
     int *temp = cont_shm_ptr;
     int elements = 0;
     printf("Total containers dropped = %d\n", totalContainersDropped);
-    printf("Total landed containers = %d\n", totalLandedContainers);
     printf("Total crashed containers = %d\n", numOfCrashedContainers);
-    targetContainer = rand() % (totalContainersDropped + 1);
-    printf("Target container %d\n", targetContainer);
-    while ((elements < totalContainersDropped) && totalContainersDropped > 0)
+    printf("Total landed containers = %d\n", totalLandedContainers);
+    printf("Total collected containers = %d\n", collectedContainers);
+    int lower_bound = totalLandedContainers + numOfCrashedContainers;
+    printf("Lower bound = %d\n", lower_bound);
+    if (lower_bound >= totalContainersDropped)
     {
-        /* check if the container is the target container */
-        if (elements == targetContainer)
+        targetContainer = -1;
+    }
+    else
+    {
+        targetContainer = rand() % (totalContainersDropped - lower_bound) + lower_bound;
+    }
+    printf("Target container %d\n", targetContainer);
+    while (elements < totalContainersDropped)
+    {
+        /* check if the container is collected or landed or crashed */
+        FlourContainer *container = (FlourContainer *)temp;
+        if (container->collected == 1 || container->landed == 1 || container->crahshed == 1)
         {
-            FlourContainer *container = (FlourContainer *)temp;
-            // generate a random prob number between 0 and 100
-            int prob = rand() % 101;
-            if (prob < propThreshold)
+            printf("\033[0;31mContainer %d is collected or landed or crashed\n\033[0m", elements);
+            temp += sizeof(FlourContainer);
+            elements++;
+            continue;
+        }
+        else /* the container is not collected or landed or crashed */
+        {
+            // monitor the height of the container
+            container->height -= 10;
+            if (container->height <= 0)
             {
-                printf("\033[0;31mProb = %d, the container %d will be crashed\n\033[0m", prob, container->container_id);
-                // the target is crashed, check the height
-                if (container->height > damageThreshold)
+                container->height = 0;
+                container->landed = 1;
+                printf("\033[0;31mThe container %d has reached the ground, will be moved to the landed area as %d\n\033[0m",
+                       elements, ((SharedData *)data_shm_ptr)->totalLandedContainers);
+                int *landed_temp = landed_shm_ptr;
+                landed_temp += (sizeof(FlourContainer)) * (((SharedData *)data_shm_ptr)->totalLandedContainers);
+                printf("Container %d moved to the landed area with Quantity = %d\n", ((SharedData *)data_shm_ptr)->totalLandedContainers, container->quantity);
+                memcpy(landed_temp, temp, sizeof(FlourContainer));
+                container->landed = 1;
+                ((SharedData *)data_shm_ptr)->totalLandedContainers++;
+            }
+            printf("Height of the container %d updated to %d\n", elements, container->height);
+            /* check if the container is the target container, and ensure it hasn't landed in this round */
+            if (targetContainer == elements)
+            {
+                if (container->landed == 0)
                 {
-                    // the container is totally damaged
-                    container->quantity = 0;
-                    printf("\033[0;31mContainer %d at height %d and has been crashed totally: quantity = %d\n\033[0m",
-                           container->container_id, container->height, container->quantity);
-                    ((SharedData *)data_shm_ptr)->totalContainersDropped--;
-                    ((SharedData *)data_shm_ptr)->numOfCrashedContainers++;
+                    // generate a random prob number between 0 and 100
+                    int prob = rand() % 101;
+                    if (prob < propThreshold)
+                    {
+                        printf("\033[0;31mProb = %d, the container %d will be crahsed\n\033[0m", prob, elements);
+                        // the target is crashed, check the height
+                        if (container->height > damageThreshold)
+                        {
+                            // the container will be removed totally
+                            container->crahshed = 1;
+                            printf("\033[0;31mContainer %d at height %d has been totally damaged\n\033[0m",
+                                   elements, container->height);
+                            ((SharedData *)data_shm_ptr)->numOfCrashedContainers++;
+                        }
+                        else
+                        {
+                            // the container is partially damaged by a ration depends on its height
+                            int tempQuantity = container->quantity;
+                            // generate a ration between (1 and 100)% of the height
+                            float ratio = (container->height + 1) / 100.0;
+                            printf("Damage ratio = %0.2f\n", ratio);
+                            container->quantity = (int)container->quantity * (1 - ratio);
+                            printf("\033[0;31mContainer %d at height %d has been partially damaged: quantity from %d to %d\n\033[0m",
+                                   elements, container->height, tempQuantity, container->quantity);
+                        }
+                    }
+                    else
+                    {
+                        printf("\033[0;31mContainer %d is safe, prob = %d is greater than %d\n\033[0m", elements, prob, propThreshold);
+                    }
                 }
                 else
                 {
-                    // the container is partially damaged by a ration depends on its height
-                    int tempQuantity = container->quantity;
-                    // generate a ration between (1 and 100)% of the height
-                    float ratio = (container->height + 1) / 100.0;
-                    printf("Damage ratio = %0.2f\n", ratio);
-                    container->quantity = (int)container->quantity * (1 - ratio);
-                    printf("\033[0;31mContainer %d at height %d has been partially crashed: quantity from %d to %d\n\033[0m",
-                           container->container_id, container->height, tempQuantity, container->quantity);
-                    if (container->quantity == 0)
-                    {
-                        ((SharedData *)data_shm_ptr)->totalContainersDropped--;
-                        ((SharedData *)data_shm_ptr)->numOfCrashedContainers++;
-                    }
+                    printf("\033[0;31mContainer %d has landed, will not be damaged\n\033[0m", elements);
                 }
             }
-            else
-            {
-                printf("Container %d is safe, prob = %d is greater than %d\n", container->container_id, prob, propThreshold);
-            }
+            temp += sizeof(FlourContainer);
+            elements++;
         }
-
-        // now update the height of the container
-        FlourContainer *container = (FlourContainer *)temp;
-        if (container->height != 0 && container->quantity != 0)
-        {
-            container->height -= 10;
-            if (container->height < 0)
-            {
-                container->height = 0;
-            }
-            printf("Height of the container %d updated to %d\n", container->container_id, container->height);
-        }
-        if (container->height == 0 && container->quantity != 0)
-        {
-            printf("\033[0;31mThe container %d has reached the ground, will be moved to the landed area\n\033[0m",
-                   container->container_id);
-            // move the container into the landed area
-            if (sem_wait(sem_landed) == -1)
-            {
-                perror("sem_wait");
-                exit(1);
-            }
-            int *landed_temp = landed_shm_ptr;
-            int landed_elements = 0;
-            while ((landed_elements < totalLandedContainers) && (totalLandedContainers > 0) &&
-                   (((FlourContainer *)landed_temp)->quantity != 0))
-            {
-                landed_temp += sizeof(FlourContainer);
-                landed_elements++;
-            }
-            // write the container into the landed area and remove it from the containers area
-            printf("Container %d moved to the landed area\n", container->container_id);
-            memcpy(landed_temp, container, sizeof(FlourContainer));
-            container->quantity = 0;
-            ((SharedData *)data_shm_ptr)->totalLandedContainers++;
-            ((SharedData *)data_shm_ptr)->totalContainersDropped--;
-            if (sem_post(sem_landed) == -1)
-            {
-                perror("sem_post");
-                exit(1);
-            }
-        }
-        temp += sizeof(FlourContainer);
-        elements++;
     }
+    printf("Containers | Dropped = %d | Landed = %d | Collected=  %d |\n",
+           ((SharedData *)data_shm_ptr)->totalContainersDropped, ((SharedData *)data_shm_ptr)->totalLandedContainers, ((SharedData *)data_shm_ptr)->cleectedContainers);
     if (sem_post(sem_containers) == -1)
     {
         perror("sem_post");
         exit(1);
     }
+    // printf("Monitor unlocked CONTAINERS SEM\n");
     if (sem_post(sem_data) == -1)
     {
         perror("sem_post");
         exit(1);
     }
+    // printf("Monitor unlocked DATA SEM\n");
+    if (sem_post(sem_landed) == -1)
+    {
+        perror("sem_post");
+        exit(1);
+    }
+    // printf("Monitor unlocked Landed SEM\n");
     printf("\033[0;32mEnd Monitoring...\n\033[0m");
     fflush(stdout);
 }
@@ -180,8 +192,40 @@ void signalHandler(int sig)
     }
     else if (sig == SIGTSTP)
     {
+        // unlink the shared memory and semaphores
+        printf("Monitor received SIGTSTP\n");
+        // if (sem_close(sem_containers) == -1)
+        // {
+        //     perror("sem_close");
+        //     exit(1);
+        // }
+        // if (sem_close(sem_data) == -1)
+        // {
+        //     perror("sem_close");
+        //     exit(1);
+        // }
+        // if (sem_close(sem_landed) == -1)
+        // {
+        //     perror("sem_close");
+        //     exit(1);
+        // }
+        // if (shm_unlink(SHM_PLANES) == -1)
+        // {
+        //     perror("shm_unlink");
+        //     exit(1);
+        // }
+        // if (shm_unlink(SHM_DATA) == -1)
+        // {
+        //     perror("shm_unlink");
+        //     exit(1);
+        // }
+        // if (shm_unlink(SHM_LANDED) == -1)
+        // {
+        //     perror("shm_unlink");
+        //     exit(1);
+        // }
         printf("Exiting monitor\n");
-        exit(0);
+        // exit(0);
     }
     else
     {

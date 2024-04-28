@@ -26,16 +26,16 @@
 #define MAX_FAMILIES 50
 
 #define SHM_PLANES "/MEM1"
-#define SHM_SIZE 1024
+#define SHM_SIZE 4096
 #define SHM_DATA "/MEM2"
-#define SHM_DATA_SIZE 512
+#define SHM_DATA_SIZE 1024
 #define SEM_CONTAINERS "/SEM1"
 #define SEM_DATA "/SEM2"
 #define SHM_SAFE "/MEM3"
-#define SHM_SAFE_SIZE 1024
+#define SHM_SAFE_SIZE 4096
 #define SEM_SAFE "/SEM3"
 #define SHM_LANDED "/MEM4"
-#define SHM_LANDED_SIZE 1024
+#define SHM_LANDED_SIZE 4096
 #define SEM_LANDED "/SEM4"
 
 typedef struct
@@ -54,6 +54,7 @@ typedef struct
     int planesDropped;
     int totalLandedContainers;
     int numOfCrashedContainers;
+    int maxContainers;
 } SharedData;
 
 // Structure to represent a flour container
@@ -62,6 +63,9 @@ typedef struct
     int container_id;
     int quantity;
     int height; // -1: damaged totally, 0: have reached the ground, otherwise: height from the ground
+    int collected;
+    int landed;
+    int crahshed;
 } FlourContainer;
 
 // Shared memory structure for wheat flour distribution
