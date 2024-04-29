@@ -31,18 +31,19 @@ pid_t monitoringProcess;
 pid_t *collectingCommittees;
 int *containersPerPlane;
 
+// containers
 int shmid_planes;
 int *containers_shm;
 sem_t *sem_containers;
+// sahred data
 int shmid_data;
 int *data_shm;
 sem_t *sem_data;
+// safe area
 int safe_shmid;
 int *safe_shm_ptr;
 sem_t *sem_safe;
-int shmid_landed;
-int *landed_shm;
-sem_t *sem_landed;
+// stage 2 shared data
 int shmid_stage2;
 int *stage2_shm;
 sem_t *sem_stage2;
@@ -54,6 +55,7 @@ void initialize_shared_data();
 void setupSignals();
 void signalHandler(int sig);
 void create_shm_sem();
+void close_all();
 
 int main(int argc, char *argv[])
 {
@@ -140,11 +142,13 @@ int main(int argc, char *argv[])
             int committee_size = config.workersPerCommittee;
             int min_energy = config.WORKER_MIN_ENERGY;
             int max_energy = config.WORKER_MAX_ENERGY;
+            int energy_per_trip = config.WORKER_ENERGY_PER_TRIP;
             sprintf(arg1, "%d", committee_id);
             sprintf(arg2, "%d", committee_size);
             sprintf(arg3, "%d", min_energy);
             sprintf(arg4, "%d", max_energy);
-            execl("./collectorsCommittee", "collectorsCommittee", arg1, arg2, arg3, arg4, NULL);
+            sprintf(arg5, "%d", energy_per_trip);
+            execl("./collectorsCommittee", "collectorsCommittee", arg1, arg2, arg3, arg4, arg5, NULL);
             perror("execl");
             exit(1);
         }
@@ -185,7 +189,7 @@ void initialize_shared_data()
     data->maxContainers = config.maxContainersPerPlane;
     data->numOfSplittedContainers = 0;
     data->numOfDistributedContainers = 0;
-    data->numOfLandedContainers = 0;
+    data->weightOfSplittedContainers = 0;
     if (sem_post(sem_data) == -1)
     {
         perror("sem_post");
@@ -219,11 +223,6 @@ void signalHandler(int sig)
         printf("Parent Entered data critical section\n");
         printf("------------------------------------------\n");
         if (sem_wait(sem_containers) == -1)
-        {
-            perror("sem_wait");
-            exit(1);
-        }
-        if (sem_wait(sem_landed) == -1)
         {
             perror("sem_wait");
             exit(1);
@@ -267,20 +266,20 @@ void signalHandler(int sig)
         }
         printf("/|/|/|/|/|/|/|/|/|/|/|/|/|/|/|/|/|/|/|/|/|/|/|/|\n");
         printf("\033[0;33m|| Number of Containers in the Landed Area = %d ||\n\033[0m", totalLandedContainers - collectedContainers);
-        temp = landed_shm;
+        temp = containers_shm;
         index = 0;
-        while (index < totalLandedContainers)
+        while (index < totalContainersDropped)
         {
             FlourContainer *container = (FlourContainer *)temp;
-            if (container->landed && (container->collected != 1))
+            if (container->landed && !container->collected && !container->crahshed)
             {
                 printf("\033[0;32mContainer %d: | Quantity=  %d | height = %d | Collected = %d | Landed = %d | Crahsed = %d | \n\033[0m",
                        index, container->quantity, container->height, container->collected, container->landed, container->crahshed);
             }
-            else if (container->landed && (container->collected == 1))
-            {
-                printf("Container %d is collected\n", index);
-            }
+            // else if (container->landed && (container->collected == 1))
+            // {
+            //     printf("Container %d is collected\n", index);
+            // }
             temp += sizeof(FlourContainer);
             index++;
         }
@@ -328,11 +327,6 @@ void signalHandler(int sig)
             perror("sem_post");
             exit(1);
         }
-        if (sem_post(sem_landed) == -1)
-        {
-            perror("sem_post");
-            exit(1);
-        }
         printf("Parent exited the critical section\n");
         // kill all child processes
         for (int i = 0; i < config.numCargoPlanes; i++)
@@ -344,11 +338,78 @@ void signalHandler(int sig)
             kill(collectingCommittees[i], SIGKILL);
         }
         kill(monitoringProcess, SIGKILL);
+        // remove all shared memory and semaphores
+        close_all();
         printf("All child processes killed, parent process will exit now\n");
         exit(0);
-        // closeSHM(containers_shm, SHM_SIZE);
-        // closeSHM(data_shm, SHM_DATA_SIZE);
     }
+}
+
+void close_all()
+{
+    // remove semaphores
+    if (sem_close(sem_containers) == -1)
+    {
+        perror("sem_close");
+        exit(1);
+    }
+    if (sem_close(sem_data) == -1)
+    {
+        perror("sem_close");
+        exit(1);
+    }
+    if (sem_close(sem_safe) == -1)
+    {
+        perror("sem_close");
+        exit(1);
+    }
+    if (sem_close(sem_stage2) == -1)
+    {
+        perror("sem_close");
+        exit(1);
+    }
+    if (sem_unlink(SEM_CONTAINERS) == -1)
+    {
+        perror("sem_unlink");
+        exit(1);
+    }
+    if (sem_unlink(SEM_DATA) == -1)
+    {
+        perror("sem_unlink");
+        exit(1);
+    }
+    if (sem_unlink(SEM_SAFE) == -1)
+    {
+        perror("sem_unlink");
+        exit(1);
+    }
+    if (sem_unlink(SEM_STAGE2) == -1)
+    {
+        perror("sem_unlink");
+        exit(1);
+    }
+    // remove shared memory
+    if (shm_unlink(SHM_PLANES) == -1)
+    {
+        perror("shm_unlink");
+        exit(1);
+    }
+    if (shm_unlink(SHM_DATA) == -1)
+    {
+        perror("shm_unlink");
+        exit(1);
+    }
+    if (shm_unlink(SHM_SAFE) == -1)
+    {
+        perror("shm_unlink");
+        exit(1);
+    }
+    if (shm_unlink(SHM_STAGE2) == -1)
+    {
+        perror("shm_unlink");
+        exit(1);
+    }
+    printf("All shared memory and semaphores removed successfully\n");
 }
 
 void create_shm_sem()
@@ -392,19 +453,6 @@ void create_shm_sem()
         perror("mapSHM Safe Error");
         exit(1);
     }
-    // Landed Containers Shared Memory
-    shmid_landed = openSHM(SHM_LANDED, SHM_LANDED_SIZE);
-    if (shmid_landed == -1)
-    {
-        perror("openSHM Landed Error");
-        exit(1);
-    }
-    landed_shm = (int *)mapSHM(shmid_landed, SHM_LANDED_SIZE);
-    if (landed_shm == NULL)
-    {
-        perror("mapSHM Landed Error");
-        exit(1);
-    }
     // Stage 2 Data Shared Memory
     shmid_stage2 = openSHM(SHM_STAGE2, SHM_STAGE2_SIZE);
     if (shmid_stage2 == -1)
@@ -440,13 +488,6 @@ void create_shm_sem()
         exit(1);
     }
 
-    sem_landed = sem_open(SEM_LANDED, O_CREAT | O_EXCL | O_RDWR, 0666, 1);
-    if (sem_landed == SEM_FAILED)
-    {
-        perror("sem_open");
-        exit(1);
-    }
-
     sem_stage2 = sem_open(SEM_STAGE2, O_CREAT | O_EXCL | O_RDWR, 0666, 1);
     if (sem_stage2 == SEM_FAILED)
     {
@@ -468,12 +509,6 @@ void create_shm_sem()
     }
     printf("Data Semaphore value: %d\n", sem_value);
     if (sem_getvalue(sem_safe, &sem_value) == -1)
-    {
-        perror("sem_getvalue");
-        exit(1);
-    }
-    printf("Safe Area Semaphore value: %d\n", sem_value);
-    if (sem_getvalue(sem_landed, &sem_value) == -1)
     {
         perror("sem_getvalue");
         exit(1);

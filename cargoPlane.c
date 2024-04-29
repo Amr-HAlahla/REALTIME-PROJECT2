@@ -215,13 +215,13 @@ void initialize_cargo_plane()
     for (int i = 0; i < current_cargoPlane.numContainers; i++)
     {
         FlourContainer container;
-        container.container_id = i + 1;
+        // container.container_id = i + 1;
         container.quantity = rand() % (100 - 15 + 1) + 15;
         container.height = current_cargoPlane.y_axis;
         container.collected = 0; /* 0 => not collected, 1 => collected */
         container.landed = 0;    /* 0 => not landed, 1 => landed */
         container.crahshed = 0;  /* 0 => not crashed, 1 => crashed */
-        container.splitted = 0;  /* 0 => not splitted, 1 => splitted */
+        // container.splitted = 0;  /* 0 => not splitted, 1 => splitted */
         current_cargoPlane.containers[i] = container;
     }
 }
@@ -238,8 +238,7 @@ void print_cargo_plane(cargoPlane plane)
     printf("Containers:\n");
     for (int i = 0; i < plane.numContainers; i++)
     {
-        printf("Container %d: Quantity: %d, Height: %d\n",
-               i + 1, plane.containers[i].container_id, plane.containers[i].quantity, plane.containers[i].height);
+        printf("Quantity: %d, Height: %d\n", plane.containers[i].quantity, plane.containers[i].height);
     }
     exit(1);
 }

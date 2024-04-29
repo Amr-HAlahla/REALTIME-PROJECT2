@@ -14,13 +14,12 @@ sem_t *sem_data;
 int safe_shmid;
 int *safe_shm_ptr;
 sem_t *sem_safe;
-// landed area
-int landed_shmid;
-int *landed_shm_ptr;
-sem_t *sem_landed;
 int stage2_shmid;
 int *stage2_shm_ptr;
 sem_t *sem_stage2;
+int cont_shmid;
+int *cont_shm_ptr;
+sem_t *sem_containers;
 
 int committee_id;
 int committee_size;
@@ -29,15 +28,16 @@ int period = 12;
 
 int main(int argc, char *argv[])
 {
-    if (argc != 5)
+    if (argc != 6)
     {
-        fprintf(stderr, "Usage: %s <committee_id> <committee_size> <min_energy> <max_energy>\n", argv[0]);
+        fprintf(stderr, "Usage: %s <committee_id> <committee_size> <min_energy> <max_energy> <energy_per_trip>\n", argv[0]);
         exit(EXIT_FAILURE);
     }
     committee_id = atoi(argv[1]);
     committee_size = atoi(argv[2]);
     int min_energy = atoi(argv[3]);
     int max_energy = atoi(argv[4]);
+    int energy_per_trip = atoi(argv[5]);
     collecters = (Collecter *)malloc(committee_size * sizeof(Collecter));
     // create the workers
     srand(time(NULL) ^ (getpid() << 16));
@@ -48,6 +48,7 @@ int main(int argc, char *argv[])
         collecter->committee_id = committee_id;
         collecter->energy = energy;
         collecter->alive = 1;
+        collecter->energy_per_trip = energy_per_trip;
         collecters[i] = *collecter;
     }
     printf("Collectors Committee %d has been created\n", committee_id);
@@ -69,8 +70,7 @@ void collectContainers()
         perror("waitSEM");
         exit(1);
     }
-    // printf("Committee %d Locked Data SEM\n", committee_id);
-    if (sem_wait(sem_landed) == -1)
+    if (sem_wait(sem_containers) == -1)
     {
         perror("waitSEM");
         exit(1);
@@ -88,8 +88,18 @@ void collectContainers()
     }
     else
     {
-        int *temp = landed_shm_ptr;
-        temp += sizeof(FlourContainer) * collectedContainers;
+        int *temp = cont_shm_ptr;
+        int index;
+        for (index = 0; index < droppedContainers; index++)
+        {
+            FlourContainer *container = (FlourContainer *)temp;
+            if (!container->landed || container->collected || container->crahshed)
+            {
+                temp += sizeof(FlourContainer);
+                continue; // skip the container
+            }
+            break; // found a container to collect
+        }
         FlourContainer *container = (FlourContainer *)temp;
         if (sem_wait(sem_stage2) == -1)
         {
@@ -105,17 +115,30 @@ void collectContainers()
         int *temp2 = safe_shm_ptr;
         temp2 += sizeof(FlourContainer) * (((SharedData *)data_shm_ptr)->cleectedContainers);
         container->collected = 1;
+        /* write the container to the safe area */
         memcpy(temp2, container, sizeof(FlourContainer));
         ((SharedData *)data_shm_ptr)->cleectedContainers++;
-
-        printf("\033[0;32mContainer %d has been collected to the safe area\n\033[0m", ((SharedData *)data_shm_ptr)->cleectedContainers);
+        printf("\033[0;32mContainer %d has been collected to the safe area as number %d\n\033[0m", index, ((SharedData *)data_shm_ptr)->cleectedContainers);
         printf("||State: | Quantity = %d | Height = %d | Crahsed = %d| Landed = %d | Collected = %d ||\n",
                container->quantity, container->height, container->crahshed, container->landed, container->collected);
         printf("\033[0;31mAt end of collection | Landed = %d | Collected = %d \n\033[0m",
                ((SharedData *)data_shm_ptr)->totalLandedContainers, ((SharedData *)data_shm_ptr)->cleectedContainers);
         int *temp3 = stage2_shm_ptr;
-        STAGE2_DATA *stage2Data = (STAGE2_DATA *)temp3;
-        stage2Data->numOfCollectedContainers = ((SharedData *)data_shm_ptr)->cleectedContainers;
+        memcmp(temp3, ((SharedData *)data_shm_ptr), sizeof(SharedData));
+        // update energy of the workers
+        for (int i = 0; i < committee_size; i++)
+        {
+            if (collecters[i].alive)
+            {
+                collecters[i].energy -= collecters[i].energy_per_trip;
+                if (collecters[i].energy <= 0)
+                {
+                    collecters[i].energy = 0;
+                    collecters[i].alive = 0;
+                    printf("\033[0;31mCollector %d has died\n\033[0m", i);
+                }
+            }
+        }
         if (sem_post(sem_stage2) == -1)
         {
             perror("signalSEM");
@@ -132,8 +155,7 @@ void collectContainers()
         perror("signalSEM");
         exit(1);
     }
-    // printf("Committee %d Unlocked Data SEM\n", committee_id);
-    if (sem_post(sem_landed) == -1)
+    if (sem_post(sem_containers) == -1)
     {
         perror("signalSEM");
         exit(1);
@@ -156,37 +178,6 @@ void signalHandler(int sig)
     }
     else if (sig == SIGTSTP)
     {
-        // // unlink the shared memory and semaphores
-        // if (shm_unlink(SHM_DATA) == -1)
-        // {
-        //     perror("shm_unlink data");
-        //     exit(1);
-        // }
-        // if (shm_unlink(SHM_SAFE) == -1)
-        // {
-        //     perror("shm_unlink safe");
-        //     exit(1);
-        // }
-        // if (shm_unlink(SHM_LANDED) == -1)
-        // {
-        //     perror("shm_unlink landed");
-        //     exit(1);
-        // }
-        // if (sem_close(sem_data) == -1)
-        // {
-        //     perror("sem_close data");
-        //     exit(1);
-        // }
-        // if (sem_close(sem_safe) == -1)
-        // {
-        //     perror("sem_close safe");
-        //     exit(1);
-        // }
-        // if (sem_close(sem_landed) == -1)
-        // {
-        //     perror("sem_close landed");
-        //     exit(1);
-        // }
         printf("Exiting committee\n");
         exit(0);
     }
@@ -204,17 +195,17 @@ void setupSignals()
 void open_shm_sem()
 {
     // Open the shared memory segment
+    if ((cont_shmid = shm_open(SHM_PLANES, O_RDWR, 0666)) == -1)
+    {
+        perror("shm_open data");
+        exit(1);
+    }
     if ((data_shmid = shm_open(SHM_DATA, O_RDWR, 0666)) == -1)
     {
         perror("shm_open data");
         exit(1);
     }
     if ((safe_shmid = shm_open(SHM_SAFE, O_RDWR, 0666)) == -1)
-    {
-        perror("shm_open data");
-        exit(1);
-    }
-    if ((landed_shmid = shm_open(SHM_LANDED, O_RDWR, 0666)) == -1)
     {
         perror("shm_open data");
         exit(1);
@@ -226,12 +217,12 @@ void open_shm_sem()
     }
 
     // Attach the shared memory segment
-    if ((data_shm_ptr = mmap(0, SHM_DATA_SIZE, PROT_READ | PROT_WRITE, MAP_SHARED, data_shmid, 0)) == MAP_FAILED)
+    if ((cont_shm_ptr = mmap(0, SHM_SIZE, PROT_READ | PROT_WRITE, MAP_SHARED, cont_shmid, 0)) == MAP_FAILED)
     {
         perror("mmap");
         exit(1);
     }
-    if ((landed_shm_ptr = mmap(0, SHM_LANDED_SIZE, PROT_READ | PROT_WRITE, MAP_SHARED, landed_shmid, 0)) == MAP_FAILED)
+    if ((data_shm_ptr = mmap(0, SHM_DATA_SIZE, PROT_READ | PROT_WRITE, MAP_SHARED, data_shmid, 0)) == MAP_FAILED)
     {
         perror("mmap");
         exit(1);
@@ -248,12 +239,12 @@ void open_shm_sem()
     }
 
     // Open the semaphore
-    if ((sem_data = sem_open(SEM_DATA, O_RDWR)) == SEM_FAILED)
+    if ((sem_containers = sem_open(SEM_CONTAINERS, O_RDWR)) == SEM_FAILED)
     {
         perror("sem_open");
         exit(1);
     }
-    if ((sem_landed = sem_open(SEM_LANDED, O_RDWR)) == SEM_FAILED)
+    if ((sem_data = sem_open(SEM_DATA, O_RDWR)) == SEM_FAILED)
     {
         perror("sem_open");
         exit(1);
