@@ -18,6 +18,9 @@ sem_t *sem_safe;
 int landed_shmid;
 int *landed_shm_ptr;
 sem_t *sem_landed;
+int stage2_shmid;
+int *stage2_shm_ptr;
+sem_t *sem_stage2;
 
 int committee_id;
 int committee_size;
@@ -88,13 +91,41 @@ void collectContainers()
         int *temp = landed_shm_ptr;
         temp += sizeof(FlourContainer) * collectedContainers;
         FlourContainer *container = (FlourContainer *)temp;
+        if (sem_wait(sem_stage2) == -1)
+        {
+            perror("waitSEM");
+            exit(1);
+        }
+        if (sem_wait(sem_safe) == -1)
+        {
+            perror("waitSEM");
+            exit(1);
+        }
+        // write the container to the safe area
+        int *temp2 = safe_shm_ptr;
+        temp2 += sizeof(FlourContainer) * (((SharedData *)data_shm_ptr)->cleectedContainers);
         container->collected = 1;
+        memcpy(temp2, container, sizeof(FlourContainer));
         ((SharedData *)data_shm_ptr)->cleectedContainers++;
-        printf("\033[0;32mContainer %d has been collected\n\033[0m", ((SharedData *)data_shm_ptr)->cleectedContainers);
-        printf("State: | Quantity = %d | Height = %d\n | Crahsed = %d| Landed = %d | Collected = %d\n",
+
+        printf("\033[0;32mContainer %d has been collected to the safe area\n\033[0m", ((SharedData *)data_shm_ptr)->cleectedContainers);
+        printf("||State: | Quantity = %d | Height = %d | Crahsed = %d| Landed = %d | Collected = %d ||\n",
                container->quantity, container->height, container->crahshed, container->landed, container->collected);
-        printf("\033[0;31mAt end of collection, Landed = %d | Collected = %d\n\033[0m",
+        printf("\033[0;31mAt end of collection | Landed = %d | Collected = %d \n\033[0m",
                ((SharedData *)data_shm_ptr)->totalLandedContainers, ((SharedData *)data_shm_ptr)->cleectedContainers);
+        int *temp3 = stage2_shm_ptr;
+        STAGE2_DATA *stage2Data = (STAGE2_DATA *)temp3;
+        stage2Data->numOfCollectedContainers = ((SharedData *)data_shm_ptr)->cleectedContainers;
+        if (sem_post(sem_stage2) == -1)
+        {
+            perror("signalSEM");
+            exit(1);
+        }
+        if (sem_post(sem_safe) == -1)
+        {
+            perror("signalSEM");
+            exit(1);
+        }
     }
     if (sem_post(sem_data) == -1)
     {
@@ -188,6 +219,11 @@ void open_shm_sem()
         perror("shm_open data");
         exit(1);
     }
+    if ((stage2_shmid = shm_open(SHM_STAGE2, O_RDWR, 0666)) == -1)
+    {
+        perror("shm_open data");
+        exit(1);
+    }
 
     // Attach the shared memory segment
     if ((data_shm_ptr = mmap(0, SHM_DATA_SIZE, PROT_READ | PROT_WRITE, MAP_SHARED, data_shmid, 0)) == MAP_FAILED)
@@ -205,6 +241,11 @@ void open_shm_sem()
         perror("mmap");
         exit(1);
     }
+    if ((stage2_shm_ptr = mmap(0, SHM_STAGE2_SIZE, PROT_READ | PROT_WRITE, MAP_SHARED, stage2_shmid, 0)) == MAP_FAILED)
+    {
+        perror("mmap");
+        exit(1);
+    }
 
     // Open the semaphore
     if ((sem_data = sem_open(SEM_DATA, O_RDWR)) == SEM_FAILED)
@@ -218,6 +259,11 @@ void open_shm_sem()
         exit(1);
     }
     if ((sem_safe = sem_open(SEM_SAFE, O_RDWR)) == SEM_FAILED)
+    {
+        perror("sem_open");
+        exit(1);
+    }
+    if ((sem_stage2 = sem_open(SEM_STAGE2, O_RDWR)) == SEM_FAILED)
     {
         perror("sem_open");
         exit(1);

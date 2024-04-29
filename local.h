@@ -37,14 +37,22 @@
 #define SHM_LANDED "/MEM4"
 #define SHM_LANDED_SIZE 4096
 #define SEM_LANDED "/SEM4"
+#define SHM_STAGE2 "/MEM5"
+#define SHM_STAGE2_SIZE 512
+#define SEM_STAGE2 "/SEM5"
 
 typedef struct
 {
     int committee_id;
     int energy;
     int alive;
-
 } Collecter;
+
+typedef struct
+{
+    int numOfCollectedContainers;
+    int weight;
+} STAGE2_DATA;
 
 typedef struct
 {
@@ -55,6 +63,9 @@ typedef struct
     int totalLandedContainers;
     int numOfCrashedContainers;
     int maxContainers;
+    int numOfSplittedContainers;
+    int numOfDistributedContainers;
+    int numOfLandedContainers;
 } SharedData;
 
 // Structure to represent a flour container
@@ -62,10 +73,11 @@ typedef struct
 {
     int container_id;
     int quantity;
-    int height; // -1: damaged totally, 0: have reached the ground, otherwise: height from the ground
+    int height;
     int collected;
     int landed;
     int crahshed;
+    int splitted;
 } FlourContainer;
 
 // Shared memory structure for wheat flour distribution

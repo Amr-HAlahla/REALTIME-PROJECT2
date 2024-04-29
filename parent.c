@@ -43,6 +43,9 @@ sem_t *sem_safe;
 int shmid_landed;
 int *landed_shm;
 sem_t *sem_landed;
+int shmid_stage2;
+int *stage2_shm;
+sem_t *sem_stage2;
 
 // Function Prototypes:
 void loadConfiguration(const char *, Config *);
@@ -180,6 +183,9 @@ void initialize_shared_data()
     data->totalLandedContainers = 0;
     data->numOfCrashedContainers = 0;
     data->maxContainers = config.maxContainersPerPlane;
+    data->numOfSplittedContainers = 0;
+    data->numOfDistributedContainers = 0;
+    data->numOfLandedContainers = 0;
     if (sem_post(sem_data) == -1)
     {
         perror("sem_post");
@@ -242,27 +248,56 @@ void signalHandler(int sig)
         printf("Crashed containers: %d\n", totalCrashedContainers);
         printf("Collected containers: %d\n", collectedContainers);
         // read containers of the first cargo plane from shared memory
-        printf("\033[0;33mContainers on the Air:\n\033[0m");
+        printf("\033[0;33mNumber of Containers in the Air = %d\n\033[0m", (totalContainersDropped - totalLandedContainers - totalCrashedContainers));
         int index = 0;
-        while ((totalContainersDropped > 0))
+        while ((index < totalContainersDropped))
         {
+            FlourContainer *container = (FlourContainer *)temp;
+            if (container->crahshed || container->landed || container->collected)
+            {
+                printf("Container %d is not in the Air\n", index);
+                temp += sizeof(FlourContainer);
+                index++;
+                continue;
+            }
             printf("\033[0;32mContainer %d: | Quantity=  %d | height = %d | Collected = %d | Landed = %d | Crahsed = %d | \n\033[0m",
-                   index, ((FlourContainer *)temp)->quantity, ((FlourContainer *)temp)->height, ((FlourContainer *)temp)->collected, ((FlourContainer *)temp)->landed, ((FlourContainer *)temp)->crahshed);
-            totalContainersDropped--;
+                   index, container->quantity, container->height, container->collected, container->landed, container->crahshed);
             index++;
-            // update the pointer to the next container
             temp += sizeof(FlourContainer);
         }
         printf("/|/|/|/|/|/|/|/|/|/|/|/|/|/|/|/|/|/|/|/|/|/|/|/|\n");
-        printf("\033[0;33mContainer in the Lande Area:\n\033[0m");
+        printf("\033[0;33m|| Number of Containers in the Landed Area = %d ||\n\033[0m", totalLandedContainers - collectedContainers);
         temp = landed_shm;
         index = 0;
-        while (totalLandedContainers > 0)
+        while (index < totalLandedContainers)
         {
-            printf("\033[0;32mContainer %d: | Quantity=  %d | height = %d | Collected = %d | Landed = %d | Crahsed = %d | \n\033[0m",
-                   index, ((FlourContainer *)temp)->quantity, ((FlourContainer *)temp)->height, ((FlourContainer *)temp)->collected, ((FlourContainer *)temp)->landed, ((FlourContainer *)temp)->crahshed);
-            totalLandedContainers--;
+            FlourContainer *container = (FlourContainer *)temp;
+            if (container->landed && (container->collected != 1))
+            {
+                printf("\033[0;32mContainer %d: | Quantity=  %d | height = %d | Collected = %d | Landed = %d | Crahsed = %d | \n\033[0m",
+                       index, container->quantity, container->height, container->collected, container->landed, container->crahshed);
+            }
+            else if (container->landed && (container->collected == 1))
+            {
+                printf("Container %d is collected\n", index);
+            }
             temp += sizeof(FlourContainer);
+            index++;
+        }
+        printf("/|/|/|/|/|/|/|/|/|/|/|/|/|/|/|/|/|/|/|/|/|/|/|/|\n");
+        printf("\033[0;33m|| Number of Containers in the Safe Area = %d ||\n\033[0m", collectedContainers);
+        temp = safe_shm_ptr;
+        index = 0;
+        while (index < collectedContainers)
+        {
+            FlourContainer *container = (FlourContainer *)temp;
+            if (container->collected)
+            {
+                printf("\033[0;32mContainer %d: | Quantity=  %d | height = %d | Collected = %d | Landed = %d | Crahsed = %d | \n\033[0m",
+                       index, container->quantity, container->height, container->collected, container->landed, container->crahshed);
+            }
+            temp += sizeof(FlourContainer);
+            index++;
         }
         // update shared data with the new values
         ((SharedData *)data_shm)->totalContainersDropped = totalContainersDropped;
@@ -270,6 +305,14 @@ void signalHandler(int sig)
         printf("\033[0;33mAfter collection process:\n\033[0m", totalContainersDropped);
         printf("Total containers dropped: %d\n Total landed containers: %d\n Total crashed containers: %d\n Total collected containers: %d\n",
                totalContainersDropped, totalLandedContainers, totalCrashedContainers, collectedContainers);
+        if (totalContainersDropped == (totalCrashedContainers + totalLandedContainers))
+        {
+            printf("\033[0;31mSimulation Done Correctly, No missed containers\n\033[0m");
+        }
+        else
+        {
+            printf("\033[0;31mSimulation Done Incorrectly, Missed containers\n\033[0m");
+        }
         if (sem_post(sem_containers) == -1)
         {
             perror("sem_post");
@@ -310,6 +353,7 @@ void signalHandler(int sig)
 
 void create_shm_sem()
 {
+    // Containers Shared Memory
     shmid_planes = openSHM(SHM_PLANES, SHM_SIZE);
     if (shmid_planes == -1)
     {
@@ -322,7 +366,7 @@ void create_shm_sem()
         perror("mapSHM Cargo Plane Error");
         exit(1);
     }
-
+    // Data Shared Memory
     shmid_data = openSHM(SHM_DATA, SHM_DATA_SIZE);
     if (shmid_data == -1)
     {
@@ -335,7 +379,7 @@ void create_shm_sem()
         perror("mapSHM Shared Data Error");
         exit(1);
     }
-
+    // Safe Area Shared Memory
     safe_shmid = openSHM(SHM_SAFE, SHM_SAFE_SIZE);
     if (safe_shmid == -1)
     {
@@ -348,7 +392,7 @@ void create_shm_sem()
         perror("mapSHM Safe Error");
         exit(1);
     }
-
+    // Landed Containers Shared Memory
     shmid_landed = openSHM(SHM_LANDED, SHM_LANDED_SIZE);
     if (shmid_landed == -1)
     {
@@ -361,7 +405,20 @@ void create_shm_sem()
         perror("mapSHM Landed Error");
         exit(1);
     }
-
+    // Stage 2 Data Shared Memory
+    shmid_stage2 = openSHM(SHM_STAGE2, SHM_STAGE2_SIZE);
+    if (shmid_stage2 == -1)
+    {
+        perror("openSHM Stage 2 Error");
+        exit(1);
+    }
+    stage2_shm = (int *)mapSHM(shmid_stage2, SHM_STAGE2_SIZE);
+    if (stage2_shm == NULL)
+    {
+        perror("mapSHM Stage 2 Error");
+        exit(1);
+    }
+    // Semaphores
     sem_containers = sem_open(SEM_CONTAINERS, O_CREAT | O_EXCL | O_RDWR, 0666, 1);
     if (sem_containers == SEM_FAILED)
     {
@@ -385,6 +442,13 @@ void create_shm_sem()
 
     sem_landed = sem_open(SEM_LANDED, O_CREAT | O_EXCL | O_RDWR, 0666, 1);
     if (sem_landed == SEM_FAILED)
+    {
+        perror("sem_open");
+        exit(1);
+    }
+
+    sem_stage2 = sem_open(SEM_STAGE2, O_CREAT | O_EXCL | O_RDWR, 0666, 1);
+    if (sem_stage2 == SEM_FAILED)
     {
         perror("sem_open");
         exit(1);
@@ -415,6 +479,12 @@ void create_shm_sem()
         exit(1);
     }
     printf("Landed Containers Semaphore value: %d\n", sem_value);
+    if (sem_getvalue(sem_stage2, &sem_value) == -1)
+    {
+        perror("sem_getvalue");
+        exit(1);
+    }
+    printf("Stage 2 Semaphore value: %d\n", sem_value);
     printf("Shared memory and semaphores created successfully\n");
 }
 

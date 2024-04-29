@@ -221,6 +221,7 @@ void initialize_cargo_plane()
         container.collected = 0; /* 0 => not collected, 1 => collected */
         container.landed = 0;    /* 0 => not landed, 1 => landed */
         container.crahshed = 0;  /* 0 => not crashed, 1 => crashed */
+        container.splitted = 0;  /* 0 => not splitted, 1 => splitted */
         current_cargoPlane.containers[i] = container;
     }
 }
