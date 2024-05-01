@@ -208,6 +208,7 @@ void signalHandler(int sig)
         // send TSTP signal to all collecting committees
         for (int i = 0; i < config.numCollectingCommittees; i++)
         {
+            printf("Parent sent SIGTSTP to committee %d with PID %d\n", i, collectingCommittees[i]);
             kill(collectingCommittees[i], SIGTSTP);
         }
         sleep(1);
@@ -284,6 +285,7 @@ void signalHandler(int sig)
             index++;
         }
         printf("/|/|/|/|/|/|/|/|/|/|/|/|/|/|/|/|/|/|/|/|/|/|/|/|\n");
+        int collectedBags = 0;
         printf("\033[0;33m|| Number of Containers in the Safe Area = %d ||\n\033[0m", collectedContainers);
         temp = safe_shm_ptr;
         index = 0;
@@ -294,10 +296,12 @@ void signalHandler(int sig)
             {
                 printf("\033[0;32mContainer %d: | Quantity=  %d | height = %d | Collected = %d | Landed = %d | Crahsed = %d | \n\033[0m",
                        index, container->quantity, container->height, container->collected, container->landed, container->crahshed);
+                collectedBags += container->quantity;
             }
             temp += sizeof(FlourContainer);
             index++;
         }
+        printf("\033[0;33m|| Number of Bags in the Safe Area = %d ||\n\033[0m", collectedBags);
         // update shared data with the new values
         ((SharedData *)data_shm)->totalContainersDropped = totalContainersDropped;
         printf("/|/|/|/|/|/|/|/|/|/|/|/|/|/|/|/|/|/|/|/|/|/|/|/|\n");

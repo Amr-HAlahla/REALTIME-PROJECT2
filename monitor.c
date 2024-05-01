@@ -75,7 +75,7 @@ void updateHeights()
         FlourContainer *container = (FlourContainer *)temp;
         if (container->collected == 1 || container->landed == 1 || container->crahshed == 1)
         {
-            printf("\033[0;31mContainer %d is collected or landed or crashed\n\033[0m", elements);
+            // printf("\033[0;31mContainer %d is collected or landed or crashed\n\033[0m", elements);
             temp += sizeof(FlourContainer);
             elements++;
             continue; // skip the container
@@ -102,7 +102,7 @@ void updateHeights()
                     int prob = rand() % 101;
                     if (prob < propThreshold)
                     {
-                        printf("\033[0;31mProb = %d, the container %d will be crahsed\n\033[0m", prob, elements);
+                        // printf("\033[0;31mProb = %d, the container %d will be crahsed\n\033[0m", prob, elements);
                         // the target is crashed, check the height
                         if (container->height > damageThreshold)
                         {

@@ -23,8 +23,8 @@ sem_t *sem_containers;
 
 int committee_id;
 int committee_size;
-Collecter *collecters;
-int period = 12;
+Collecter **collecters;
+int period;
 
 int main(int argc, char *argv[])
 {
@@ -38,26 +38,27 @@ int main(int argc, char *argv[])
     int min_energy = atoi(argv[3]);
     int max_energy = atoi(argv[4]);
     int energy_per_trip = atoi(argv[5]);
-    collecters = (Collecter *)malloc(committee_size * sizeof(Collecter));
+    collecters = malloc(sizeof(Collecter *) * committee_size);
+    period = rand() % (15 - 8 + 1) + 8;
     // create the workers
     srand(time(NULL) ^ (getpid() << 16));
-    int energy = rand() % (max_energy - min_energy + 1) + min_energy;
+    printf("Creating Workers, Energy Per Trip = %d\n", energy_per_trip);
     for (int i = 0; i < committee_size; i++)
     {
         Collecter *collecter = malloc(sizeof(Collecter));
+        int energy = rand() % (max_energy - min_energy + 1) + min_energy;
         collecter->committee_id = committee_id;
         collecter->energy = energy;
         collecter->alive = 1;
         collecter->energy_per_trip = energy_per_trip;
-        collecters[i] = *collecter;
+        collecters[i] = collecter;
+        printf("Worker %d | Energy = %d\n", i, energy);
     }
     printf("Collectors Committee %d has been created\n", committee_id);
     setupSignals();
     open_shm_sem();
     while (1)
     {
-        // sleep(5);
-        // alarm(period);
         pause();
     }
 }
@@ -121,21 +122,22 @@ void collectContainers()
         printf("\033[0;32mContainer %d has been collected to the safe area as number %d\n\033[0m", index, ((SharedData *)data_shm_ptr)->cleectedContainers);
         printf("||State: | Quantity = %d | Height = %d | Crahsed = %d| Landed = %d | Collected = %d ||\n",
                container->quantity, container->height, container->crahshed, container->landed, container->collected);
-        printf("\033[0;31mAt end of collection | Landed = %d | Collected = %d \n\033[0m",
-               ((SharedData *)data_shm_ptr)->totalLandedContainers, ((SharedData *)data_shm_ptr)->cleectedContainers);
+        // printf("\033[0;31mAt end of collection | Landed = %d | Collected = %d \n\033[0m",
+        //        ((SharedData *)data_shm_ptr)->totalLandedContainers, ((SharedData *)data_shm_ptr)->cleectedContainers);
         int *temp3 = stage2_shm_ptr;
         memcmp(temp3, ((SharedData *)data_shm_ptr), sizeof(SharedData));
         // update energy of the workers
+        printf("Update energy of the workers\n");
         for (int i = 0; i < committee_size; i++)
         {
-            if (collecters[i].alive)
+            if (collecters[i]->alive)
             {
-                collecters[i].energy -= collecters[i].energy_per_trip;
-                if (collecters[i].energy <= 0)
+                collecters[i]->energy -= collecters[i]->energy_per_trip;
+                if (collecters[i]->energy <= 0)
                 {
-                    collecters[i].energy = 0;
-                    collecters[i].alive = 0;
-                    printf("\033[0;31mCollector %d has died\n\033[0m", i);
+                    collecters[i]->energy = 0;
+                    collecters[i]->alive = 0;
+                    // printf("\033[0;31mCollector %d has died, energy = %d\n\033[0m", i, collecters[i]->energy);
                 }
             }
         }
@@ -169,6 +171,8 @@ void signalHandler(int sig)
 {
     if (sig == SIGALRM)
     {
+        /* always update the period, to get a new random order for the committee */
+        period = rand() % (15 - 8 + 1) + 8;
         collectContainers();
         alarm(period);
     }
@@ -178,6 +182,12 @@ void signalHandler(int sig)
     }
     else if (sig == SIGTSTP)
     {
+        printf("Committee %d received SIGTSTP\n", committee_id);
+        printf("The energy of workers at the end of the day\n");
+        for (int i = 0; i < committee_size; i++)
+        {
+            printf("Worker %d | Energy = %d | Alive = %d\n", i, collecters[i]->energy, collecters[i]->alive);
+        }
         printf("Exiting committee\n");
         exit(0);
     }
@@ -186,6 +196,16 @@ void signalHandler(int sig)
 void setupSignals()
 {
     if (sigset(SIGALRM, signalHandler) == SIG_ERR)
+    {
+        perror("sigaction");
+        exit(1);
+    }
+    if (sigset(SIGUSR1, signalHandler) == SIG_ERR)
+    {
+        perror("sigaction");
+        exit(1);
+    }
+    if (sigset(SIGTSTP, signalHandler) == SIG_ERR)
     {
         perror("sigaction");
         exit(1);
