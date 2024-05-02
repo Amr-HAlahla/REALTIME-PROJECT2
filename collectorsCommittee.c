@@ -124,10 +124,7 @@ void collectContainers()
                container->quantity, container->height, container->crahshed, container->landed, container->collected);
         // printf("\033[0;31mAt end of collection | Landed = %d | Collected = %d \n\033[0m",
         //        ((SharedData *)data_shm_ptr)->totalLandedContainers, ((SharedData *)data_shm_ptr)->cleectedContainers);
-        int *temp3 = stage2_shm_ptr;
-        memcmp(temp3, ((SharedData *)data_shm_ptr), sizeof(SharedData));
-        // update energy of the workers
-        printf("Update energy of the workers\n");
+        ((STAGE2_DATA *)stage2_shm_ptr)->numOFCollectedContainers++;
         for (int i = 0; i < committee_size; i++)
         {
             if (collecters[i]->alive)
@@ -137,7 +134,6 @@ void collectContainers()
                 {
                     collecters[i]->energy = 0;
                     collecters[i]->alive = 0;
-                    // printf("\033[0;31mCollector %d has died, energy = %d\n\033[0m", i, collecters[i]->energy);
                 }
             }
         }

@@ -23,13 +23,10 @@ typedef struct
     int WORKER_MIN_ENERGY;
     int WORKER_MAX_ENERGY;
     int WORKER_ENERGY_PER_TRIP;
+    int NUM_DITRIBUTING_COMMITTEES;
+    int DISTRIBUTING_WORKERS_PER_COMMITTEE;
+    int NUM_SPLITTING_WORKERS;
 } Config;
-
-Config config;
-pid_t *cargoPlanes;
-pid_t monitoringProcess;
-pid_t *collectingCommittees;
-int *containersPerPlane;
 
 // containers
 int shmid_planes;
@@ -57,6 +54,13 @@ void signalHandler(int sig);
 void create_shm_sem();
 void close_all();
 
+Config config;
+pid_t *cargoPlanes;
+pid_t monitoringProcess;
+pid_t *collectingCommittees;
+int *containersPerPlane;
+pid_t *splitter;
+pid_t *distributers;
 int main(int argc, char *argv[])
 {
     if (argc != 2)
@@ -70,6 +74,9 @@ int main(int argc, char *argv[])
     cargoPlanes = (pid_t *)malloc(config.numCargoPlanes * sizeof(pid_t));
     collectingCommittees = (pid_t *)malloc(config.numCollectingCommittees * sizeof(pid_t));
     containersPerPlane = (int *)malloc(config.numCargoPlanes * sizeof(int));
+    distributers = (pid_t *)malloc(config.NUM_DITRIBUTING_COMMITTEES * sizeof(pid_t));
+    splitter = (pid_t *)malloc(config.NUM_SPLITTING_WORKERS * sizeof(pid_t));
+
     setupSignals();
     create_shm_sem();
     initialize_shared_data();
@@ -77,6 +84,7 @@ int main(int argc, char *argv[])
     pid_t pid;
     char arg1[10], arg2[10], arg3[10], arg4[10], arg5[10], arg6[10], arg7[10];
 
+    /* ===================================================== */
     printf("Creating Cargo Planes:\n");
     for (int i = 0; i < config.numCargoPlanes; i++)
     {
@@ -114,6 +122,7 @@ int main(int argc, char *argv[])
         kill(cargoPlanes[i], SIGUSR1); // Start dropping containers
     }
     sleep(1);
+    /* ===================================================== */
     monitoringProcess = fork();
     if (monitoringProcess == -1)
     {
@@ -127,7 +136,7 @@ int main(int argc, char *argv[])
         exit(1);
     }
     sleep(1);
-    // create collecting committees
+    /* create collecting committees ===================================================== */
     for (int i = 0; i < config.numCollectingCommittees; i++)
     {
         pid = fork();
@@ -148,13 +157,34 @@ int main(int argc, char *argv[])
             sprintf(arg3, "%d", min_energy);
             sprintf(arg4, "%d", max_energy);
             sprintf(arg5, "%d", energy_per_trip);
-            execl("./collectorsCommittee", "collectorsCommittee", arg1, arg2, arg3, arg4, arg5, NULL);
+            execl("./collectors", "collectors", arg1, arg2, arg3, arg4, arg5, NULL);
             perror("execl");
             exit(1);
         }
         else if (pid > 0)
         {
             collectingCommittees[i] = pid;
+        }
+    }
+    // create splitters
+    for (int i = 0; i < config.NUM_SPLITTING_WORKERS; i++)
+    {
+        pid = fork();
+        if (pid == -1)
+        {
+            perror("fork");
+            exit(1);
+        }
+        if (pid == 0)
+        {
+            sprintf(arg1, "%d", i);
+            execl("./splitter", "splitter", arg1, NULL);
+            perror("execl");
+            exit(1);
+        }
+        else if (pid > 0)
+        {
+            splitter[i] = pid;
         }
     }
     sleep(2);
@@ -165,6 +195,12 @@ int main(int argc, char *argv[])
         kill(collectingCommittees[i], SIGALRM); // Start collecting
     }
     // Wait for all cargo planes to finish
+    sleep(3);
+    // start splitter processes.
+    for (int i = 0; i < config.NUM_SPLITTING_WORKERS; i++)
+    {
+        kill(splitter[i], SIGALRM);
+    }
     for (int i = 0; i < config.numCargoPlanes; i++)
     {
         waitpid(cargoPlanes[i], NULL, 0);
@@ -189,12 +225,28 @@ void initialize_shared_data()
     data->maxContainers = config.maxContainersPerPlane;
     data->numOfSplittedContainers = 0;
     data->numOfDistributedContainers = 0;
-    data->weightOfSplittedContainers = 0;
+    data->numOfBags = 0;
     if (sem_post(sem_data) == -1)
     {
         perror("sem_post");
         exit(1);
     }
+    if (sem_wait(sem_stage2) == -1)
+    {
+        perror("sem_wait");
+        exit(1);
+    }
+    STAGE2_DATA *stage2 = (STAGE2_DATA *)stage2_shm;
+    stage2->numOfSplittedContainers = 0;
+    stage2->numOfBags = 0;
+    stage2->numOfDistributedContainers = 0;
+    stage2->numOFCollectedContainers = 0;
+    if (sem_post(sem_stage2) == -1)
+    {
+        perror("sem_post");
+        exit(1);
+    }
+
     printf("Shared data initialized successfully\n");
 }
 
@@ -212,6 +264,12 @@ void signalHandler(int sig)
             kill(collectingCommittees[i], SIGTSTP);
         }
         sleep(1);
+        // send TSTP signal to all splitter processes
+        for (int i = 0; i < config.NUM_SPLITTING_WORKERS; i++)
+        {
+            printf("Parent sent SIGTSTP to splitter %d with PID %d\n", i, splitter[i]);
+            kill(splitter[i], SIGTSTP);
+        }
         if (sem_wait(sem_data) == -1)
         {
             perror("sem_wait");
@@ -277,10 +335,6 @@ void signalHandler(int sig)
                 printf("\033[0;32mContainer %d: | Quantity=  %d | height = %d | Collected = %d | Landed = %d | Crahsed = %d | \n\033[0m",
                        index, container->quantity, container->height, container->collected, container->landed, container->crahshed);
             }
-            // else if (container->landed && (container->collected == 1))
-            // {
-            //     printf("Container %d is collected\n", index);
-            // }
             temp += sizeof(FlourContainer);
             index++;
         }
@@ -303,12 +357,26 @@ void signalHandler(int sig)
         }
         printf("\033[0;33m|| Number of Bags in the Safe Area = %d ||\n\033[0m", collectedBags);
         // update shared data with the new values
-        ((SharedData *)data_shm)->totalContainersDropped = totalContainersDropped;
         printf("/|/|/|/|/|/|/|/|/|/|/|/|/|/|/|/|/|/|/|/|/|/|/|/|\n");
+        ((SharedData *)data_shm)->totalContainersDropped = totalContainersDropped;
+        // print number of splitted containers and the total weight splitted
+        if (sem_wait(sem_stage2) == -1)
+        {
+            perror("sem_wait");
+            exit(1);
+        }
+        STAGE2_DATA *stage2 = (STAGE2_DATA *)stage2_shm;
+        printf("\033[0;33m|| Number of Containers have been splitted = %d ||\n\033[0m", stage2->numOfSplittedContainers);
+        printf("\033[0;33m|| Number of available Bags = %d ||\n\033[0m", stage2->numOfBags);
+        if (sem_post(sem_stage2) == -1)
+        {
+            perror("sem_post");
+            exit(1);
+        }
         printf("\033[0;33mAfter collection process:\n\033[0m", totalContainersDropped);
-        printf("Total containers dropped: %d\n Total landed containers: %d\n Total crashed containers: %d\n Total collected containers: %d\n",
-               totalContainersDropped, totalLandedContainers, totalCrashedContainers, collectedContainers);
-        if (totalContainersDropped == (totalCrashedContainers + totalLandedContainers))
+        printf("Total containers dropped: %d\n Total landed containers: %d\n Total crashed containers: %d\n Total collected containers: %d Total splitted containers: %d\n",
+               totalContainersDropped, totalLandedContainers, totalCrashedContainers, collectedContainers, stage2->numOfSplittedContainers);
+        if (totalContainersDropped == summation)
         {
             printf("\033[0;31mSimulation Done Correctly, No missed containers\n\033[0m");
         }
@@ -604,6 +672,12 @@ void loadConfiguration(const char *filename, Config *config)
                 config->WORKER_MAX_ENERGY = value;
             else if (strcmp(key, "WORKER_ENERGY_PER_TRIP") == 0)
                 config->WORKER_ENERGY_PER_TRIP = value;
+            else if (strcmp(key, "NUM_DITRIBUTING_COMMITTEES") == 0)
+                config->NUM_DITRIBUTING_COMMITTEES = value;
+            else if (strcmp(key, "DISTRIBUTING_WORKERS_PER_COMMITTEE") == 0)
+                config->DISTRIBUTING_WORKERS_PER_COMMITTEE = value;
+            else if (strcmp(key, "NUM_SPLITTING_WORKERS") == 0)
+                config->NUM_SPLITTING_WORKERS = value;
         }
     }
     fclose(file);
