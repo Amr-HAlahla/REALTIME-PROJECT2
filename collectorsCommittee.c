@@ -42,7 +42,7 @@ int main(int argc, char *argv[])
     period = rand() % (15 - 8 + 1) + 8;
     // create the workers
     srand(time(NULL) ^ (getpid() << 16));
-    printf("Creating Workers, Energy Per Trip = %d\n", energy_per_trip);
+    // printf("Creating Workers, Energy Per Trip = %d\n", energy_per_trip);
     for (int i = 0; i < committee_size; i++)
     {
         Collecter *collecter = malloc(sizeof(Collecter));
@@ -52,7 +52,7 @@ int main(int argc, char *argv[])
         collecter->alive = 1;
         collecter->energy_per_trip = energy_per_trip;
         collecters[i] = collecter;
-        printf("Worker %d | Energy = %d\n", i, energy);
+        // printf("Worker %d | Energy = %d\n", i, energy);
     }
     printf("Collectors Committee %d has been created\n", committee_id);
     setupSignals();
@@ -184,6 +184,12 @@ void signalHandler(int sig)
         {
             printf("Worker %d | Energy = %d | Alive = %d\n", i, collecters[i]->energy, collecters[i]->alive);
         }
+        // free the allocated memory
+        for (int i = 0; i < committee_size; i++)
+        {
+            free(collecters[i]);
+        }
+        free(collecters);
         printf("Exiting committee\n");
         exit(0);
     }

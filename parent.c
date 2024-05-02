@@ -25,6 +25,7 @@ typedef struct
     int WORKER_ENERGY_PER_TRIP;
     int NUM_DITRIBUTING_COMMITTEES;
     int DISTRIBUTING_WORKERS_PER_COMMITTEE;
+    int DISTRIBUTING_WORKER_CAPACITY;
     int NUM_SPLITTING_WORKERS;
 } Config;
 
@@ -189,17 +190,74 @@ int main(int argc, char *argv[])
     }
     sleep(2);
     kill(monitoringProcess, SIGALRM); // Start monitoring
+    sleep(1);
+    // create distribution commitees
+    for (int i = 0; i < config.NUM_DITRIBUTING_COMMITTEES; i++)
+    {
+        pid = fork();
+        if (pid == -1)
+        {
+            perror("fork");
+            exit(1);
+        }
+        if (pid == 0)
+        {
+            /* open file to redirect stdout  filename = "distribution_%d.txt" */
+            char filename[50];
+            sprintf(filename, "distribution_%d.log", i);
+            int file = open(filename, O_WRONLY | O_CREAT | O_TRUNC, 0666);
+            if (file == -1)
+            {
+                perror("open");
+                exit(EXIT_FAILURE);
+            }
+            // redirect the standard output to the file
+            int fileDescriptor = dup2(file, STDOUT_FILENO);
+            if (fileDescriptor == -1)
+            {
+                perror("dup2");
+                exit(EXIT_FAILURE);
+            }
+            close(file);
+
+            int committee_id = i;
+            int committee_size = config.DISTRIBUTING_WORKERS_PER_COMMITTEE;
+            int min_energy = config.WORKER_MIN_ENERGY;
+            int max_energy = config.WORKER_MAX_ENERGY;
+            int energy_per_trip = config.WORKER_ENERGY_PER_TRIP;
+            int capacity = config.DISTRIBUTING_WORKER_CAPACITY;
+            sprintf(arg1, "%d", committee_id);
+            sprintf(arg2, "%d", committee_size);
+            sprintf(arg3, "%d", min_energy);
+            sprintf(arg4, "%d", max_energy);
+            sprintf(arg5, "%d", energy_per_trip);
+            sprintf(arg6, "%d", capacity);
+            execl("./distributers", "distributers", arg1, arg2, arg3, arg4, arg5, arg6, NULL);
+            perror("execl");
+            exit(1);
+        }
+        else if (pid > 0)
+        {
+            distributers[i] = pid;
+        }
+    }
     sleep(5);
     for (int i = 0; i < config.numCollectingCommittees; i++)
     {
         kill(collectingCommittees[i], SIGALRM); // Start collecting
     }
     // Wait for all cargo planes to finish
-    sleep(3);
+    sleep(2);
     // start splitter processes.
     for (int i = 0; i < config.NUM_SPLITTING_WORKERS; i++)
     {
         kill(splitter[i], SIGALRM);
+    }
+    sleep(1);
+    // start distribution processes
+    for (int i = 0; i < config.NUM_DITRIBUTING_COMMITTEES; i++)
+    {
+        kill(distributers[i], SIGALRM);
     }
     for (int i = 0; i < config.numCargoPlanes; i++)
     {
@@ -241,6 +299,7 @@ void initialize_shared_data()
     stage2->numOfBags = 0;
     stage2->numOfDistributedContainers = 0;
     stage2->numOFCollectedContainers = 0;
+    stage2->distributedBags = 0;
     if (sem_post(sem_stage2) == -1)
     {
         perror("sem_post");
@@ -256,7 +315,6 @@ void signalHandler(int sig)
     {
         // send TSTP signal to the monitoring process
         kill(monitoringProcess, SIGTSTP);
-        sleep(1);
         // send TSTP signal to all collecting committees
         for (int i = 0; i < config.numCollectingCommittees; i++)
         {
@@ -269,6 +327,13 @@ void signalHandler(int sig)
         {
             printf("Parent sent SIGTSTP to splitter %d with PID %d\n", i, splitter[i]);
             kill(splitter[i], SIGTSTP);
+        }
+        sleep(1);
+        // send TSTP signal to all distributers
+        for (int i = 0; i < config.NUM_DITRIBUTING_COMMITTEES; i++)
+        {
+            printf("Parent sent SIGTSTP to distributer %d with PID %d\n", i, distributers[i]);
+            kill(distributers[i], SIGTSTP);
         }
         if (sem_wait(sem_data) == -1)
         {
@@ -313,7 +378,7 @@ void signalHandler(int sig)
             FlourContainer *container = (FlourContainer *)temp;
             if (container->crahshed || container->landed || container->collected)
             {
-                printf("Container %d is not in the Air\n", index);
+                // printf("Container %d is not in the Air\n", index);
                 temp += sizeof(FlourContainer);
                 index++;
                 continue;
@@ -482,6 +547,14 @@ void close_all()
         exit(1);
     }
     printf("All shared memory and semaphores removed successfully\n");
+
+    // free allocated memory
+    free(cargoPlanes);
+    free(collectingCommittees);
+    free(containersPerPlane);
+    free(distributers);
+    free(splitter);
+    printf("All allocated memory freed successfully\n");
 }
 
 void create_shm_sem()
@@ -676,6 +749,8 @@ void loadConfiguration(const char *filename, Config *config)
                 config->NUM_DITRIBUTING_COMMITTEES = value;
             else if (strcmp(key, "DISTRIBUTING_WORKERS_PER_COMMITTEE") == 0)
                 config->DISTRIBUTING_WORKERS_PER_COMMITTEE = value;
+            else if (strcmp(key, "DISTRIBUTING_WORKER_CAPACITY") == 0)
+                config->DISTRIBUTING_WORKER_CAPACITY = value;
             else if (strcmp(key, "NUM_SPLITTING_WORKERS") == 0)
                 config->NUM_SPLITTING_WORKERS = value;
         }

@@ -41,6 +41,15 @@
 typedef struct
 {
     int committee_id;
+    int capacity;
+    int energy;
+    int alive;
+    int energy_per_trip;
+} Distributer;
+
+typedef struct
+{
+    int committee_id;
     int energy;
     int alive;
     int energy_per_trip;
@@ -52,6 +61,7 @@ typedef struct
     int numOfBags;
     int numOfDistributedContainers;
     int numOFCollectedContainers;
+    int distributedBags;
 } STAGE2_DATA;
 
 typedef struct

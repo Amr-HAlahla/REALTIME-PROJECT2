@@ -43,7 +43,7 @@ int main(int argc, char *argv[])
     signalSetup();
     initialize_cargo_plane();
     open_shm_sem();
-    printf("Droping frequency: %d\n", current_cargoPlane.dropFrequency);
+    // printf("Droping frequency: %d\n", current_cargoPlane.dropFrequency);
 
     while (1)
     {
@@ -140,7 +140,7 @@ void dropContainers()
     int totalContainersDropped = ((SharedData *)data_shm_ptr)->totalContainersDropped;
     int *temp_ptr = cont_shm_ptr;
     temp_ptr += sizeof(FlourContainer) * totalContainersDropped;
-    printf("Writing container %d to CONTAINERS SHM at %p\n", totalContainersDropped, temp_ptr);
+    // printf("Writing container %d to CONTAINERS SHM at %p\n", totalContainersDropped, temp_ptr);
     memcpy(temp_ptr, &current_cargoPlane.containers[numOfContainers - remainingContainers], sizeof(FlourContainer));
     remainingContainers--;
     ((SharedData *)data_shm_ptr)->totalContainersDropped++;
