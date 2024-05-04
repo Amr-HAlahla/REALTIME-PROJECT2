@@ -27,6 +27,7 @@ typedef struct
     int DISTRIBUTING_WORKERS_PER_COMMITTEE;
     int DISTRIBUTING_WORKER_CAPACITY;
     int NUM_SPLITTING_WORKERS;
+    int NUM_OF_FAMILIES;
 } Config;
 
 // containers
@@ -41,6 +42,10 @@ sem_t *sem_data;
 int safe_shmid;
 int *safe_shm_ptr;
 sem_t *sem_safe;
+// families
+int families_shmid;
+int *families_shm;
+sem_t *sem_families;
 // stage 2 shared data
 int shmid_stage2;
 int *stage2_shm;
@@ -62,6 +67,8 @@ pid_t *collectingCommittees;
 int *containersPerPlane;
 pid_t *splitter;
 pid_t *distributers;
+pid_t familyProcess;
+
 int main(int argc, char *argv[])
 {
     if (argc != 2)
@@ -136,6 +143,8 @@ int main(int argc, char *argv[])
         perror("execl");
         exit(1);
     }
+    sleep(2);
+    kill(monitoringProcess, SIGALRM); // Start monitoring
     sleep(1);
     /* create collecting committees ===================================================== */
     for (int i = 0; i < config.numCollectingCommittees; i++)
@@ -188,8 +197,6 @@ int main(int argc, char *argv[])
             splitter[i] = pid;
         }
     }
-    sleep(2);
-    kill(monitoringProcess, SIGALRM); // Start monitoring
     sleep(1);
     // create distribution commitees
     for (int i = 0; i < config.NUM_DITRIBUTING_COMMITTEES; i++)
@@ -241,7 +248,38 @@ int main(int argc, char *argv[])
             distributers[i] = pid;
         }
     }
-    sleep(5);
+    // create families process
+    familyProcess = fork();
+    if (familyProcess == -1)
+    {
+        perror("fork");
+        exit(1);
+    }
+    if (familyProcess == 0)
+    {
+        // redirect the output into a file families.log
+        int file = open("families.log", O_WRONLY | O_CREAT | O_TRUNC, 0666);
+        if (file == -1)
+        {
+            perror("open");
+            exit(EXIT_FAILURE);
+        }
+        // redirect the standard output to the file
+        int fileDescriptor = dup2(file, STDOUT_FILENO);
+        if (fileDescriptor == -1)
+        {
+            perror("dup2");
+            exit(EXIT_FAILURE);
+        }
+        close(file);
+        // prepare args
+        sprintf(arg1, "%d", config.NUM_OF_FAMILIES);
+        sprintf(arg2, "%d", config.familyStarvationDeathThreshold);
+        execl("./families", "families", arg1, arg2, NULL);
+        perror("execl");
+        exit(1);
+    }
+    sleep(3);
     for (int i = 0; i < config.numCollectingCommittees; i++)
     {
         kill(collectingCommittees[i], SIGALRM); // Start collecting
@@ -253,12 +291,15 @@ int main(int argc, char *argv[])
     {
         kill(splitter[i], SIGALRM);
     }
-    sleep(1);
+    sleep(2);
     // start distribution processes
     for (int i = 0; i < config.NUM_DITRIBUTING_COMMITTEES; i++)
     {
         kill(distributers[i], SIGALRM);
     }
+    sleep(2);
+    // start families process
+    kill(familyProcess, SIGALRM);
     for (int i = 0; i < config.numCargoPlanes; i++)
     {
         waitpid(cargoPlanes[i], NULL, 0);
@@ -300,12 +341,12 @@ void initialize_shared_data()
     stage2->numOfDistributedContainers = 0;
     stage2->numOFCollectedContainers = 0;
     stage2->distributedBags = 0;
+    stage2->NUM_OF_FAMILIES = config.NUM_OF_FAMILIES;
     if (sem_post(sem_stage2) == -1)
     {
         perror("sem_post");
         exit(1);
     }
-
     printf("Shared data initialized successfully\n");
 }
 
@@ -335,6 +376,10 @@ void signalHandler(int sig)
             printf("Parent sent SIGTSTP to distributer %d with PID %d\n", i, distributers[i]);
             kill(distributers[i], SIGTSTP);
         }
+        // send TSTP signal to families process
+        printf("Parent sent SIGTSTP to families process with PID %d\n", familyProcess);
+        kill(familyProcess, SIGTSTP);
+
         if (sem_wait(sem_data) == -1)
         {
             perror("sem_wait");
@@ -433,6 +478,7 @@ void signalHandler(int sig)
         STAGE2_DATA *stage2 = (STAGE2_DATA *)stage2_shm;
         printf("\033[0;33m|| Number of Containers have been splitted = %d ||\n\033[0m", stage2->numOfSplittedContainers);
         printf("\033[0;33m|| Number of available Bags = %d ||\n\033[0m", stage2->numOfBags);
+        printf("\033[0;33m|| Number of distributed Bags = %d ||\n\033[0m", stage2->distributedBags);
         if (sem_post(sem_stage2) == -1)
         {
             perror("sem_post");
@@ -505,6 +551,11 @@ void close_all()
         perror("sem_close");
         exit(1);
     }
+    if (sem_close(sem_families) == -1)
+    {
+        perror("sem_close");
+        exit(1);
+    }
     if (sem_unlink(SEM_CONTAINERS) == -1)
     {
         perror("sem_unlink");
@@ -521,6 +572,11 @@ void close_all()
         exit(1);
     }
     if (sem_unlink(SEM_STAGE2) == -1)
+    {
+        perror("sem_unlink");
+        exit(1);
+    }
+    if (sem_unlink(SEM_FAMILIES) == -1)
     {
         perror("sem_unlink");
         exit(1);
@@ -542,6 +598,11 @@ void close_all()
         exit(1);
     }
     if (shm_unlink(SHM_STAGE2) == -1)
+    {
+        perror("shm_unlink");
+        exit(1);
+    }
+    if (shm_unlink(FAMILIES_SHM) == -1)
     {
         perror("shm_unlink");
         exit(1);
@@ -598,6 +659,19 @@ void create_shm_sem()
         perror("mapSHM Safe Error");
         exit(1);
     }
+    // Families Shared Memory
+    families_shmid = openSHM(FAMILIES_SHM, FAMILIES_SHM_SIZE);
+    if (families_shmid == -1)
+    {
+        perror("openSHM Families Error");
+        exit(1);
+    }
+    families_shm = (int *)mapSHM(families_shmid, FAMILIES_SHM_SIZE);
+    if (families_shm == NULL)
+    {
+        perror("mapSHM Families Error");
+        exit(1);
+    }
     // Stage 2 Data Shared Memory
     shmid_stage2 = openSHM(SHM_STAGE2, SHM_STAGE2_SIZE);
     if (shmid_stage2 == -1)
@@ -628,6 +702,13 @@ void create_shm_sem()
 
     sem_safe = sem_open(SEM_SAFE, O_CREAT | O_EXCL | O_RDWR, 0666, 1);
     if (sem_safe == SEM_FAILED)
+    {
+        perror("sem_open");
+        exit(1);
+    }
+
+    sem_families = sem_open(SEM_FAMILIES, O_CREAT | O_EXCL | O_RDWR, 0666, 1);
+    if (sem_families == SEM_FAILED)
     {
         perror("sem_open");
         exit(1);
@@ -665,6 +746,12 @@ void create_shm_sem()
         exit(1);
     }
     printf("Stage 2 Semaphore value: %d\n", sem_value);
+    if (sem_getvalue(sem_families, &sem_value) == -1)
+    {
+        perror("sem_getvalue");
+        exit(1);
+    }
+    printf("Families Semaphore value: %d\n", sem_value);
     printf("Shared memory and semaphores created successfully\n");
 }
 
@@ -753,6 +840,8 @@ void loadConfiguration(const char *filename, Config *config)
                 config->DISTRIBUTING_WORKER_CAPACITY = value;
             else if (strcmp(key, "NUM_SPLITTING_WORKERS") == 0)
                 config->NUM_SPLITTING_WORKERS = value;
+            else if (strcmp(key, "NUM_OF_FAMILIES") == 0)
+                config->NUM_OF_FAMILIES = value;
         }
     }
     fclose(file);

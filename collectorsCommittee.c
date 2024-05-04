@@ -14,9 +14,11 @@ sem_t *sem_data;
 int safe_shmid;
 int *safe_shm_ptr;
 sem_t *sem_safe;
+// stage 2 shared data
 int stage2_shmid;
 int *stage2_shm_ptr;
 sem_t *sem_stage2;
+// containers shared data
 int cont_shmid;
 int *cont_shm_ptr;
 sem_t *sem_containers;
@@ -80,8 +82,6 @@ void collectContainers()
     int collectedContainers = ((SharedData *)data_shm_ptr)->cleectedContainers;
     int crashedContainers = ((SharedData *)data_shm_ptr)->numOfCrashedContainers;
     int droppedContainers = ((SharedData *)data_shm_ptr)->totalContainersDropped;
-    int maxContainers = ((SharedData *)data_shm_ptr)->maxContainers;
-    // printf("Committee %d Locked Landed SEM\n", committee_id);
     printf("\033[0;34mCollectors Committee %d is collecting containers...\n\033[0m", committee_id);
     if ((totalLandedContainers - collectedContainers) == 0)
     {
@@ -119,7 +119,7 @@ void collectContainers()
         /* write the container to the safe area */
         memcpy(temp2, container, sizeof(FlourContainer));
         ((SharedData *)data_shm_ptr)->cleectedContainers++;
-        printf("\033[0;32mContainer %d has been collected to the safe area as number %d\n\033[0m", index, ((SharedData *)data_shm_ptr)->cleectedContainers);
+        // printf("\033[0;32mContainer %d has been collected to the safe area as number %d\n\033[0m", index, ((SharedData *)data_shm_ptr)->cleectedContainers);
         printf("||State: | Quantity = %d | Height = %d | Crahsed = %d| Landed = %d | Collected = %d ||\n",
                container->quantity, container->height, container->crahshed, container->landed, container->collected);
         // printf("\033[0;31mAt end of collection | Landed = %d | Collected = %d \n\033[0m",

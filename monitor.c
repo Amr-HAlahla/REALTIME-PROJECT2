@@ -58,7 +58,7 @@ void updateHeights()
     printf("Total landed containers = %d\n", totalLandedContainers);
     printf("Total collected containers = %d\n", collectedContainers);
     int lower_bound = totalLandedContainers + numOfCrashedContainers;
-    printf("Lower bound = %d\n", lower_bound);
+    // printf("Lower bound = %d\n", lower_bound);
     if (lower_bound >= totalContainersDropped)
     {
         targetContainer = -1;
@@ -67,7 +67,7 @@ void updateHeights()
     {
         targetContainer = rand() % (totalContainersDropped - lower_bound) + lower_bound;
     }
-    printf("Target container %d\n", targetContainer);
+    // printf("Target container %d\n", targetContainer);
     int elements = 0;
     while (elements < totalContainersDropped)
     {

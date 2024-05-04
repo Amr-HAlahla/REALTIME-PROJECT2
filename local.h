@@ -27,16 +27,30 @@
 
 #define SHM_PLANES "/MEM1"
 #define SHM_SIZE 4096
+#define SEM_CONTAINERS "/SEM1"
 #define SHM_DATA "/MEM2"
 #define SHM_DATA_SIZE 1024
-#define SEM_CONTAINERS "/SEM1"
 #define SEM_DATA "/SEM2"
 #define SHM_SAFE "/MEM3"
 #define SHM_SAFE_SIZE 4096
 #define SEM_SAFE "/SEM3"
+#define FAMILIES_SHM "/MEM4"
+#define FAMILIES_SHM_SIZE 1024
+#define SEM_FAMILIES "/SEM4"
 #define SHM_STAGE2 "/MEM5"
 #define SHM_STAGE2_SIZE 1024
 #define SEM_STAGE2 "/SEM5"
+
+typedef struct
+{
+    int id;
+    int starvation_level;
+    int needed_bags;
+    int history; // store num of bags given to the family overall the time
+    float ratio;
+    int alive;
+    pid_t pid;
+} Family;
 
 typedef struct
 {
@@ -62,6 +76,7 @@ typedef struct
     int numOfDistributedContainers;
     int numOFCollectedContainers;
     int distributedBags;
+    int NUM_OF_FAMILIES;
 } STAGE2_DATA;
 
 typedef struct

@@ -1,7 +1,7 @@
 CC = gcc
 CFLAGS = -Wall
 
-all: parent cargoPlane committee monitor splitter distributers
+all: parent cargoPlane committee monitor splitter distributers families
 
 parent: parent.c
 	@$(CC) $(CFLAGS) -o parent parent.c
@@ -21,9 +21,12 @@ splitter: splitter.c
 distributers: distributers.c
 	@$(CC) $(CFLAGS) -o distributers distributers.c
 
-run: parent cargoPlane committee monitor splitter distributers
+families: families.c
+	@$(CC) $(CFLAGS) -o families families.c
+
+run: parent cargoPlane committee monitor splitter distributers families
 	@echo "compiling and running the program..."
 	@./parent configuration.txt
 
 clean:
-	@rm -f *.o parent cargoPlane monitor collectors splitter distributers 
+	@rm -f *.o parent cargoPlane monitor collectors splitter distributers families *.log

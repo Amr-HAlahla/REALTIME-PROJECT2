@@ -6,14 +6,14 @@ void signalHandler(int sig);
 void open_shm_sem();
 void bagsDistribution();
 
-// safe area
-// int safe_shmid;
-// int *safe_shm_ptr;
-// sem_t *sem_safe;
 // stage 2 shared data
 int stage2_shmid;
 int *stage2_shm_ptr;
 sem_t *sem_stage2;
+// families shared data
+int families_shmid;
+int *families_shm_ptr;
+sem_t *sem_families;
 
 // int committee_id;
 int committee_size;
@@ -75,18 +75,63 @@ void bagsDistribution()
     STAGE2_DATA *stage2_data = (STAGE2_DATA *)stage2_shm_ptr;
     int numOfBags = stage2_data->numOfBags;                 // available bags in the storage
     int numOfDistriutedBags = stage2_data->distributedBags; // distributed bags
+    int NUM_OF_FAMILIES = stage2_data->NUM_OF_FAMILIES;
     if (numOfBags <= 0)
     {
         printf("\033[0;31mNo more bags to distribute\033[0m\n");
     }
     else
     {
-        // calculate the bags to distribute
-        int bagsToDistribute = totalCapacity > numOfBags ? numOfBags : totalCapacity;
-        // distribute the bags
-        ((STAGE2_DATA *)stage2_shm_ptr)->distributedBags += bagsToDistribute;
-        ((STAGE2_DATA *)stage2_shm_ptr)->numOfBags -= bagsToDistribute;
-        printf("\033[0;34mDistributers Commitee %d is distributing %d bags\n\033[0m", distributers[0]->committee_id, bagsToDistribute);
+        // update the families data
+        if (sem_wait(sem_families) == -1)
+        {
+            perror("sem_wait");
+            exit(1);
+        }
+        // calculate the total capacity of the distributers
+        for (int i = 0; i < committee_size; i++)
+        {
+            if (distributers[i]->alive)
+            {
+                // total amount of bags that can be distributed by the committee
+                totalCapacity += distributers[i]->capacity;
+            }
+        }
+        int bagsToDistribute = totalCapacity > numOfBags ? numOfBags : totalCapacity; // bags to distribute by this committee
+        int done = 0;
+        pid_t families_process;
+        for (int i = 0; i < NUM_OF_FAMILIES; i++)
+        {
+            Family *family = (Family *)(families_shm_ptr + i * sizeof(Family));
+            families_process = family->pid; // get the process id of the family
+            if (family->alive)
+            {
+                int neededBags = family->needed_bags;
+                if (neededBags > 0)
+                {
+                    int bags = neededBags > bagsToDistribute ? bagsToDistribute : neededBags;
+                    family->needed_bags -= bags;
+                    family->history += bags;
+                    bagsToDistribute -= bags;
+                    float update_ratio = (float)family->needed_bags / 100.0;
+                    if (update_ratio > 1.0)
+                    {
+                        update_ratio = 1.0;
+                    }
+                    family->starvation_level -= family->starvation_level * (1 - update_ratio);
+                    printf("\033[0;32mFamily %d has received %d bags\n\033[0m", i, bags);
+                    done++;
+                    // update the stage 2 data
+                    ((STAGE2_DATA *)stage2_shm_ptr)->distributedBags += bags;
+                    ((STAGE2_DATA *)stage2_shm_ptr)->numOfBags -= bags;
+                }
+            }
+            if (bagsToDistribute <= 0)
+            {
+
+                break; // all bags have been distributed by this committee
+            }
+        }
         // update the energy of the workers
         for (int i = 0; i < committee_size; i++)
         {
@@ -100,6 +145,20 @@ void bagsDistribution()
                     distributers[i]->energy = 0;
                 }
             }
+        }
+        if (done)
+        {
+            // some families have received bags, send a signal to the families to reorder them
+            if (kill(families_process, SIGUSR1) == -1)
+            {
+                perror("kill");
+                exit(1);
+            }
+        }
+        if (sem_post(sem_families) == -1)
+        {
+            perror("sem_post");
+            exit(1);
         }
     }
     if (sem_post(sem_stage2) == -1)
@@ -129,6 +188,7 @@ void signalHandler(int sig)
     {
         bagsDistribution();
         alarm(period);
+        period = rand() % (12 - 5 + 1) + 5; // get a new random period
     }
     else if (sig == SIGTSTP)
     {
@@ -160,6 +220,23 @@ void open_shm_sem()
         exit(1);
     }
     if ((sem_stage2 = sem_open(SEM_STAGE2, O_RDWR)) == SEM_FAILED)
+    {
+        perror("sem_open");
+        exit(1);
+    }
+
+    // open families shared memory
+    if ((families_shmid = shm_open(FAMILIES_SHM, O_RDWR, 0666)) == -1)
+    {
+        perror("shm_open");
+        exit(1);
+    }
+    if ((families_shm_ptr = mmap(NULL, FAMILIES_SHM_SIZE, PROT_READ | PROT_WRITE, MAP_SHARED, families_shmid, 0)) == MAP_FAILED)
+    {
+        perror("mmap");
+        exit(1);
+    }
+    if ((sem_families = sem_open(SEM_FAMILIES, O_RDWR)) == SEM_FAILED)
     {
         perror("sem_open");
         exit(1);
