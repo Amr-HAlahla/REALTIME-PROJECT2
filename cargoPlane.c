@@ -5,7 +5,6 @@ void initialize_cargo_plane();
 void print_cargo_plane(cargoPlane plane);
 void signalHandler(int sig);
 void signalSetup();
-// void writeSHM();
 void dropContainers();
 void refillContainers();
 void open_shm_sem();
@@ -20,7 +19,6 @@ sem_t *sem_containers;
 sem_t *sem_data;
 int remainingContainers;
 int elementIndex = 0;
-int refillTimes = 0;
 
 int CRITICAL = 0;
 
@@ -45,7 +43,6 @@ int main(int argc, char *argv[])
     signalSetup();
     initialize_cargo_plane();
     open_shm_sem();
-    // printf("Droping frequency: %d\n", current_cargoPlane.dropFrequency);
 
     while (1)
     {
@@ -65,44 +62,14 @@ void signalHandler(int sig)
     }
     else if (sig == SIGALRM)
     {
-        // printf("Cargo Plane %d received SIGALRM\n", current_cargoPlane.plane_id);
         if (remainingContainers == 0)
         {
-            // if (refillTimes < 2)
-            // {
             // refill the containers
             int refillTime = rand() % (maxRefill - minRefill + 1) + minRefill;
             printf("\033[0;31mCargo Plane %d has dropped all containers and will refill in %d seconds\033[0m\n",
                    current_cargoPlane.plane_id, refillTime);
             refillContainers();
-            refillTimes++;
             alarm(current_cargoPlane.dropFrequency);
-            // }
-            // else
-            // {
-            //     printf("\033[0;32mCargo Plane %d has dropped all containers\033[0m\n", current_cargoPlane.plane_id);
-            //     // open data shared memory
-            //     if (sem_wait(sem_data) == -1)
-            //     {
-            //         perror("waitSEM");
-            //         exit(1);
-            //     }
-            //     int totalPlanes = ((SharedData *)data_shm_ptr)->numOfCargoPlanes;
-            //     int planesDropped = ((SharedData *)data_shm_ptr)->planesDropped;
-            //     planesDropped++;
-            //     ((SharedData *)data_shm_ptr)->planesDropped = planesDropped;
-            //     if (planesDropped == totalPlanes)
-            //     {
-            //         // all planes have dropped their containers
-            //         printf("\033[0;31mAll planes have dropped their containers\033[0m\n");
-            //         kill(getppid(), SIGINT);
-            //     }
-            //     if (sem_post(sem_data) == -1)
-            //     {
-            //         perror("signalSEM");
-            //         exit(1);
-            //     }
-            // }
         }
         else
         {
@@ -150,23 +117,21 @@ void refillContainers()
 void dropContainers()
 {
     current_cargoPlane.status = 1;
-    // printf("Cargo Plane %d dropping a container\n", current_cargoPlane.plane_id);
     if (sem_wait(sem_data) == -1)
     {
         perror("waitSEM");
         exit(1);
     }
-    // printf("Cargo Plane %d locked DATA SEM\n", current_cargoPlane.plane_id);
     if (sem_wait(sem_containers) == -1)
     {
         perror("waitSEM");
         exit(1);
     }
     CRITICAL = 1;
+    /* Drop the container */
     int totalContainersDropped = ((SharedData *)data_shm_ptr)->totalContainersDropped;
     int *temp_ptr = cont_shm_ptr;
     temp_ptr += sizeof(FlourContainer) * totalContainersDropped;
-    // printf("Writing container %d to CONTAINERS SHM at %p\n", totalContainersDropped, temp_ptr);
     memcpy(temp_ptr, &current_cargoPlane.containers[numOfContainers - remainingContainers], sizeof(FlourContainer));
     remainingContainers--;
     ((SharedData *)data_shm_ptr)->totalContainersDropped++;

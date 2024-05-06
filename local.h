@@ -83,11 +83,8 @@ typedef struct
 {
     int totalContainersDropped;
     int cleectedContainers;
-    int numOfCargoPlanes;
-    int planesDropped;
     int totalLandedContainers;
     int numOfCrashedContainers;
-    int maxContainers;
     int numOfSplittedContainers;
     int numOfDistributedContainers;
     int numOfBags;

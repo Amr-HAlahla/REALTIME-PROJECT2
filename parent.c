@@ -129,13 +129,12 @@ int main(int argc, char *argv[])
         else
         {
             cargoPlanes[i] = pid;
-            // printf("Cargo Plane %d created with %d containers\n", i + 1, numContainers);
         }
     }
     sleep(2);
     for (int i = 0; i < config.numCargoPlanes; i++)
     {
-        kill(cargoPlanes[i], SIGUSR1); // Start dropping containers
+        kill(cargoPlanes[i], SIGUSR1);
     }
     /* ===================================================== */
     monitoringProcess = fork();
@@ -353,13 +352,6 @@ int main(int argc, char *argv[])
     {
         kill(distributers[i], SIGALRM);
     }
-    sleep(5);
-    // start families process
-    kill(familyProcess, SIGALRM);
-    sleep(1);
-    // start occupation forces process
-    kill(occupationForces, SIGALRM);
-    sleep(1);
     // redirect the output into a file parent.log
     int file = open("parent.log", O_WRONLY | O_CREAT | O_TRUNC, 0666);
     if (file == -1)
@@ -375,6 +367,13 @@ int main(int argc, char *argv[])
         exit(EXIT_FAILURE);
     }
     close(file);
+    sleep(4);
+    // start families process
+    kill(familyProcess, SIGALRM);
+    sleep(1);
+    // start occupation forces process
+    kill(occupationForces, SIGALRM);
+    sleep(1);
     alarm(config.simulationDurationThreshold);
     while (1)
     {
@@ -652,6 +651,9 @@ void test()
     printf("\033[0;33m|| Number of Containers have been splitted = %d ||\n\033[0m", stage2->numOfSplittedContainers);
     printf("\033[0;33m|| Number of available Bags = %d ||\n\033[0m", stage2->numOfBags);
     printf("\033[0;33m|| Number of distributed Bags = %d ||\n\033[0m", stage2->distributedBags);
+    printf("\033[0;33m|| Number of killed collecting workers = %d ||\n\033[0m", numOfCollectorsKilled);
+    printf("\033[0;33m|| Number of killed distributing workers = %d ||\n\033[0m", numOfDistributersKilled);
+    printf("\033[0;33m|| Number of missed splitters = %d ||\n\033[0m", numOfSplittersMissed);
     // if (sem_post(sem_stage2) == -1)
     // {
     //     perror("sem_post");
@@ -660,14 +662,6 @@ void test()
     printf("\033[0;33mAfter collection process:\n\033[0m", totalContainersDropped);
     printf("Total containers dropped: %d\n Total landed containers: %d\n Total crashed containers: %d\n Total collected containers: %d Total splitted containers: %d\n",
            totalContainersDropped, totalLandedContainers, totalCrashedContainers, collectedContainers, stage2->numOfSplittedContainers);
-    if (totalContainersDropped == summation)
-    {
-        printf("\033[0;31mSimulation Done Correctly, No missed containers\n\033[0m");
-    }
-    else
-    {
-        printf("\033[0;31mSimulation Done Incorrectly, Missed containers\n\033[0m");
-    }
     // if (sem_post(sem_containers) == -1)
     // {
     //     perror("sem_post");
@@ -710,11 +704,8 @@ void initialize_shared_data()
     SharedData *data = (SharedData *)data_shm;
     data->totalContainersDropped = 0;
     data->cleectedContainers = 0;
-    data->numOfCargoPlanes = config.numCargoPlanes;
-    data->planesDropped = 0;
     data->totalLandedContainers = 0;
     data->numOfCrashedContainers = 0;
-    data->maxContainers = config.maxContainersPerPlane;
     data->numOfSplittedContainers = 0;
     data->numOfDistributedContainers = 0;
     data->numOfBags = 0;

@@ -21,7 +21,6 @@ int committee_id;
 int committee_size;
 int min_energy;
 int max_energy;
-// int capacity;
 Distributer **distributers;
 int period;
 int totalCapacity; // total capacity of all distributers
@@ -59,7 +58,6 @@ int main(int argc, char *argv[])
         distributer->alive = 1;
         distributer->energy_per_trip = energy_per_trip;
         distributer->capacity = capacity;
-        // totalCapacity += capacity;
         distributers[i] = distributer;
         printf("Worker %d | Energy = %d | Capacity = %d\n", i, energy, capacity);
     }
@@ -81,6 +79,7 @@ void bagsDistribution()
         exit(1);
     }
     CRITICAL = 1;
+    /* Distribute bags to the families based on their needs and the capacity of the distributers */
     STAGE2_DATA *stage2_data = (STAGE2_DATA *)stage2_shm_ptr;
     int numOfBags = stage2_data->numOfBags;                 // available bags in the storage
     int numOfDistriutedBags = stage2_data->distributedBags; // distributed bags
@@ -111,13 +110,15 @@ void bagsDistribution()
         pid_t families_process;
         for (int i = 0; i < NUM_OF_FAMILIES; i++)
         {
+            /* get the family data */
             Family *family = (Family *)(families_shm_ptr + i * sizeof(Family));
-            families_process = family->pid; // get the process id of the family
+            families_process = family->pid;
             if (family->alive)
             {
                 int neededBags = family->needed_bags;
                 if (neededBags > 0)
                 {
+                    /* distribute bags to the family */
                     int bags = neededBags > bagsToDistribute ? bagsToDistribute : neededBags;
                     family->needed_bags -= bags;
                     family->history += bags;
@@ -157,7 +158,7 @@ void bagsDistribution()
                     }
                 }
             }
-            // some families have received bags, send a signal to the families to reorder them
+            // some families have received bags, send a signal to the families process to reorder them
             if (kill(families_process, SIGUSR1) == -1)
             {
                 perror("kill");
@@ -223,7 +224,6 @@ void tryToKillWorker()
         int energy = distributers[random_victim]->energy;
         // Decide if the worker will be killed based on their energy level
         // Probability of being killed is higher for workers with lower energy
-
         // Generate a random number between 0 and 10000 (100 squared)
         int chance = rand() % 10001;
 

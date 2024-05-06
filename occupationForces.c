@@ -25,13 +25,6 @@ void killWorker()
 {
     printf("Occupation Forces are trying to kill a worker\n");
     kill(getppid(), SIGUSR1);
-    /*send a USR1 signal to the parent process with a random value
-        1 => Killing a collector
-        2 => Killing a distributer
-    // */
-    // union sigval value;
-    // value.sival_int = rand() % 2 == 0 ? 1 : 2;
-    // sigqueue(getppid(), SIGUSR1, value);
 }
 
 void signalHandler(int sig)
@@ -44,7 +37,7 @@ void signalHandler(int sig)
     else if (sig == SIGALRM)
     {
         killWorker();
-        int period = rand() % (20 - 10 + 1) + 10; // random period between 10 and 20
+        int period = rand() % (20 - 8 + 1) + 8;
         alarm(period);
     }
 }

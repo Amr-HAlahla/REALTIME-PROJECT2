@@ -51,8 +51,7 @@ int main(int argc, char *argv[])
     open_shm_sem();
     while (1)
     {
-        // printf("Families are waiting\n");
-        sleep(1);
+        pause();
     }
     return 0;
 }
@@ -121,6 +120,7 @@ void updateStarvationLevel()
     printf("Updating the starvation level\n");
     for (int i = 0; i < NUM_OF_FAMILIES; i++)
     {
+        /* update the starvation level, and check if the family is still alive */
         if (FAMILIES[i]->alive)
         {
             if (FAMILIES[i]->starvation_level < 10)

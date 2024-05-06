@@ -50,7 +50,6 @@ int main(int argc, char *argv[])
     period = rand() % (15 - 8 + 1) + 8;
     // create the workers
     srand(time(NULL) ^ (getpid() << 16));
-    // printf("Creating Workers, Energy Per Trip = %d\n", energy_per_trip);
     for (int i = 0; i < committee_size; i++)
     {
         Collecter *collecter = malloc(sizeof(Collecter));
@@ -60,7 +59,6 @@ int main(int argc, char *argv[])
         collecter->alive = 1;
         collecter->energy_per_trip = energy_per_trip;
         collecters[i] = collecter;
-        // printf("Worker %d | Energy = %d\n", i, energy);
     }
     printf("Collectors Committee %d has been created\n", committee_id);
     setupSignals();
@@ -96,6 +94,7 @@ void collectContainers()
     }
     else
     {
+        /* read the containers in the landed area */
         int *temp = cont_shm_ptr;
         int index;
         for (index = 0; index < droppedContainers; index++)
@@ -119,14 +118,12 @@ void collectContainers()
             perror("waitSEM");
             exit(1);
         }
-        // write the container to the safe area
+        /* write the container to the safe area */
         int *temp2 = safe_shm_ptr;
         temp2 += sizeof(FlourContainer) * (((SharedData *)data_shm_ptr)->cleectedContainers);
         container->collected = 1;
-        /* write the container to the safe area */
         memcpy(temp2, container, sizeof(FlourContainer));
         ((SharedData *)data_shm_ptr)->cleectedContainers++;
-        // printf("\033[0;32mContainer %d has been collected to the safe area as number %d\n\033[0m", index, ((SharedData *)data_shm_ptr)->cleectedContainers);
         printf("||State: | Quantity = %d | Height = %d | Crahsed = %d| Landed = %d | Collected = %d ||\n",
                container->quantity, container->height, container->crahshed, container->landed, container->collected);
         // printf("\033[0;31mAt end of collection | Landed = %d | Collected = %d \n\033[0m",
@@ -134,6 +131,7 @@ void collectContainers()
         ((STAGE2_DATA *)stage2_shm_ptr)->numOFCollectedContainers++;
         for (int i = 0; i < committee_size; i++)
         {
+            /* decrease the energy of the workers */
             if (collecters[i]->alive)
             {
                 collecters[i]->energy -= collecters[i]->energy_per_trip;
@@ -168,7 +166,6 @@ void collectContainers()
         exit(1);
     }
     CRITICAL = 0;
-    // printf("Committee %d Unlocked Landed SEM\n", committee_id);
     printf("\033[0;34mEnd Collecting...\n\033[0m");
     fflush(stdout);
 }
@@ -182,6 +179,7 @@ void tryToKillWorker()
     }
     else
     {
+        /* choose a random worker to kill */
         int random_worker = rand() % committee_size;
         while (!collecters[random_worker]->alive)
         {
@@ -209,12 +207,14 @@ void tryToKillWorker()
 }
 void replaceWorker()
 {
+    sleep(3); // wait for the worker to be replaced
     printf("Committee %d received SIGUSR2, killed worker has been replaced\n", committee_id);
     // find a died worker and make him alive and with new energy level
     for (int i = 0; i < committee_size; i++)
     {
         if (!collecters[i]->alive)
         {
+            /* replace the killed worker */
             int energy = rand() % (max_energy - min_energy + 1) + min_energy;
             collecters[i]->energy = energy;
             collecters[i]->alive = 1;

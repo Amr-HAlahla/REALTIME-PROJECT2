@@ -17,7 +17,7 @@ int totalContainersDropped = 0;
 
 int period = 5;         // Period for updating heights
 int targetContainer;    // Container to be crashed
-int propThreshold = 30; // above threshold => crash the container
+int propThreshold = 30; // above threshold => shot down the container
 /* above threshold meters => all the content of the container is damaged, and the container is removed
     below threshold meters => partial damage   */
 int damageThreshold = 65;
@@ -31,13 +31,11 @@ int main(int argc, char *argv[])
         exit(EXIT_FAILURE);
     }
     containersThreshold = atoi(argv[1]);
-    srand(time(NULL) ^ (getpid() << 16)); // Seed random generator based on planeID
+    srand(time(NULL) ^ (getpid() << 16));
     setupSignals();
     open_shm_sem();
     while (1)
     {
-        // sleep(5);
-        // alarm(period);
         pause();
     }
 }
@@ -59,7 +57,7 @@ void updateHeights()
         perror("waitSEM");
         exit(1);
     }
-    // choose a target container to crash (between 0 and totalContainersDropped)
+    // choose a target container to shot down (between 0 and totalContainersDropped)
     printf("\033[0;32mStart Monitoring...\n\033[0m");
     int *temp = cont_shm_ptr;
     printf("Total containers dropped = %d\n", totalContainersDropped);
@@ -67,7 +65,6 @@ void updateHeights()
     printf("Total landed containers = %d\n", totalLandedContainers);
     printf("Total collected containers = %d\n", collectedContainers);
     int lower_bound = totalLandedContainers + numOfCrashedContainers;
-    // printf("Lower bound = %d\n", lower_bound);
     if (lower_bound >= totalContainersDropped)
     {
         targetContainer = -1;
@@ -76,7 +73,6 @@ void updateHeights()
     {
         targetContainer = rand() % (totalContainersDropped - lower_bound) + lower_bound;
     }
-    // printf("Target container %d\n", targetContainer);
     int elements = 0;
     while (elements < totalContainersDropped)
     {
