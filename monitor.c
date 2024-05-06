@@ -21,8 +21,16 @@ int propThreshold = 30; // above threshold => crash the container
 /* above threshold meters => all the content of the container is damaged, and the container is removed
     below threshold meters => partial damage   */
 int damageThreshold = 65;
+int containersThreshold;
+int CRITICAL = 0;
 int main(int argc, char *argv[])
 {
+    if (argc != 2)
+    {
+        fprintf(stderr, "Usage: %s <containersThreshold>\n", argv[0]);
+        exit(EXIT_FAILURE);
+    }
+    containersThreshold = atoi(argv[1]);
     srand(time(NULL) ^ (getpid() << 16)); // Seed random generator based on planeID
     setupSignals();
     open_shm_sem();
@@ -41,6 +49,7 @@ void updateHeights()
         perror("waitSEM");
         exit(1);
     }
+    CRITICAL = 1;
     int totalContainersDropped = ((SharedData *)data_shm_ptr)->totalContainersDropped;
     int totalLandedContainers = ((SharedData *)data_shm_ptr)->totalLandedContainers;
     int numOfCrashedContainers = ((SharedData *)data_shm_ptr)->numOfCrashedContainers;
@@ -112,6 +121,13 @@ void updateHeights()
                             printf("\033[0;31mContainer %d at height %d has been totally damaged\n\033[0m",
                                    elements, container->height);
                             ((SharedData *)data_shm_ptr)->numOfCrashedContainers++;
+                            // check containers shot down threshold
+                            if (((SharedData *)data_shm_ptr)->numOfCrashedContainers >= containersThreshold)
+                            {
+                                // send INT signal to the parent process
+                                printf("Number of crashed containers %d, reached the threshold %d\n", ((SharedData *)data_shm_ptr)->numOfCrashedContainers, containersThreshold);
+                                kill(getppid(), SIGINT);
+                            }
                         }
                         else
                         {
@@ -151,6 +167,7 @@ void updateHeights()
         perror("sem_post");
         exit(1);
     }
+    CRITICAL = 0;
     printf("\033[0;32mEnd Monitoring...\n\033[0m");
     fflush(stdout);
 }
@@ -169,8 +186,19 @@ void signalHandler(int sig)
     else if (sig == SIGTSTP)
     {
         printf("Monitor received SIGTSTP\n");
+        if (CRITICAL)
+        {
+            if (sem_post(sem_containers) == -1)
+            {
+                perror("sem_post");
+            }
+            if (sem_post(sem_data) == -1)
+            {
+                perror("sem_post");
+            }
+        }
         printf("Exiting monitor\n");
-        // exit(0);
+        exit(0);
     }
     else
     {

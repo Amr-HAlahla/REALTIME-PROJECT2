@@ -5,6 +5,8 @@ void setupSignals();
 void signalHandler(int sig);
 void open_shm_sem();
 void bagsDistribution();
+void tryToKillWorker();
+void replaceWorker();
 
 // stage 2 shared data
 int stage2_shmid;
@@ -15,12 +17,18 @@ int families_shmid;
 int *families_shm_ptr;
 sem_t *sem_families;
 
-// int committee_id;
+int committee_id;
 int committee_size;
+int min_energy;
+int max_energy;
 // int capacity;
 Distributer **distributers;
 int period;
 int totalCapacity; // total capacity of all distributers
+int killedWorkers = 0;
+int random_victim;
+
+int CRITICAL = 0;
 
 int main(int argc, char *argv[])
 {
@@ -30,10 +38,10 @@ int main(int argc, char *argv[])
         fprintf(stderr, "Usage: %s <commitee_id> <commitee_size> <min_energy> <max_energy> <energy_per_trip> <capacity>\n", argv[0]);
         exit(EXIT_FAILURE);
     }
-    int committee_id = atoi(argv[1]);
+    committee_id = atoi(argv[1]);
     committee_size = atoi(argv[2]);
-    int min_energy = atoi(argv[3]);
-    int max_energy = atoi(argv[4]);
+    min_energy = atoi(argv[3]);
+    max_energy = atoi(argv[4]);
     int energy_per_trip = atoi(argv[5]);
     int capacity = atoi(argv[6]);
     distributers = malloc(sizeof(Distributer *) * committee_size);
@@ -72,6 +80,7 @@ void bagsDistribution()
         perror("sem_wait");
         exit(1);
     }
+    CRITICAL = 1;
     STAGE2_DATA *stage2_data = (STAGE2_DATA *)stage2_shm_ptr;
     int numOfBags = stage2_data->numOfBags;                 // available bags in the storage
     int numOfDistriutedBags = stage2_data->distributedBags; // distributed bags
@@ -128,26 +137,26 @@ void bagsDistribution()
             }
             if (bagsToDistribute <= 0)
             {
-
                 break; // all bags have been distributed by this committee
-            }
-        }
-        // update the energy of the workers
-        for (int i = 0; i < committee_size; i++)
-        {
-            if (distributers[i]->alive)
-            {
-                distributers[i]->energy -= distributers[i]->energy_per_trip;
-                if (distributers[i]->energy <= 0)
-                {
-                    // printf("\033[0;31mWorker %d has died\033[0m\n", i);
-                    distributers[i]->alive = 0;
-                    distributers[i]->energy = 0;
-                }
             }
         }
         if (done)
         {
+            // update the energy of the workers
+            for (int i = 0; i < committee_size; i++)
+            {
+                if (distributers[i]->alive)
+                {
+                    distributers[i]->energy -= distributers[i]->energy_per_trip;
+                    if (distributers[i]->energy <= 0)
+                    {
+                        // printf("\033[0;31mWorker %d has died\033[0m\n", i);
+                        distributers[i]->alive = 0;
+                        distributers[i]->energy = 0;
+                        killedWorkers++;
+                    }
+                }
+            }
             // some families have received bags, send a signal to the families to reorder them
             if (kill(families_process, SIGUSR1) == -1)
             {
@@ -166,6 +175,7 @@ void bagsDistribution()
         perror("sem_post");
         exit(1);
     }
+    CRITICAL = 0;
 }
 
 void setupSignals()
@@ -180,6 +190,81 @@ void setupSignals()
         perror("signal");
         exit(1);
     }
+    else if (sigset(SIGUSR1, signalHandler) == SIG_ERR)
+    {
+        perror("signal");
+        exit(1);
+    }
+    else if (sigset(SIGUSR2, signalHandler) == SIG_ERR)
+    {
+        perror("signal");
+        exit(1);
+    }
+}
+
+void tryToKillWorker()
+{
+    printf("Distributers Commitee %d received SIGUSR1, occupation forces are trying to kill a worker\n", distributers[0]->committee_id);
+    /* occupier wants to kill a worker, choose a random worker to kill
+    the decision is based on the energy of the workers, it will decide if the worker will be killed or not
+    */
+    if (killedWorkers == committee_size)
+    {
+        printf("All workers in comittee %d have been killed.\n", distributers[0]->committee_id);
+    }
+    else
+    {
+        random_victim = rand() % committee_size;
+        while (distributers[random_victim]->alive == 0)
+        {
+            random_victim = rand() % committee_size;
+        }
+        // now get the energy of this worker
+        int energy = distributers[random_victim]->energy;
+        // Decide if the worker will be killed based on their energy level
+        // Probability of being killed is higher for workers with lower energy
+
+        // Generate a random number between 0 and 10000 (100 squared)
+        int chance = rand() % 10001;
+
+        // Square the worker's energy level
+        int energy_squared = energy * energy;
+
+        // If the chance is less than the worker's squared energy, the worker survives
+        if (chance < energy_squared)
+        {
+            printf("\033[0;32mWorker %d survived.\n\033[0m", random_victim);
+        }
+        // Otherwise, the worker is killed
+        else
+        {
+            printf("\033[0;31mWorker %d was killed by the occupation forces.\n\033[0m", random_victim);
+            // Code to remove the worker goes here
+            distributers[random_victim]->alive = 0;
+            killedWorkers++;
+            // Notify parent of successful killing process.
+            kill(getppid(), SIGUSR2);
+        }
+    }
+}
+
+void replaceWorker()
+{
+    sleep(3); // wait for the splitter worker to arrive to replace the killed worker
+    // killed worker is going to be reaplced by a splitter worker.
+    printf("Distributers Commitee %d received SIGUSR2, killed worker is going to be replaced by a splitter worker\n", committee_id);
+    for (int i = 0; i < committee_size; i++)
+    {
+        if (distributers[i]->alive == 0)
+        {
+            distributers[i]->alive = 1;
+            int energy = rand() % (max_energy - min_energy + 1) + min_energy;
+            distributers[i]->energy = energy;
+            printf("Worker %d is going to be replaced by a splitter worker\n", i);
+            killedWorkers--;
+            break;
+        }
+    }
 }
 
 void signalHandler(int sig)
@@ -190,9 +275,28 @@ void signalHandler(int sig)
         alarm(period);
         period = rand() % (12 - 5 + 1) + 5; // get a new random period
     }
+    else if (sig == SIGUSR1)
+    {
+        tryToKillWorker();
+    }
+    else if (sig == SIGUSR2)
+    {
+        replaceWorker();
+    }
     else if (sig == SIGTSTP)
     {
         printf("Distributers Commitee %d received SIGTSTP\n", distributers[0]->committee_id);
+        if (CRITICAL)
+        {
+            if (sem_post(sem_stage2) == -1)
+            {
+                perror("sem_post");
+            }
+            if (sem_post(sem_families) == -1)
+            {
+                perror("sem_post");
+            }
+        }
         for (int i = 0; i < committee_size; i++)
         {
             printf("Worker %d | Energy = %d | Alive = %d\n", i, distributers[i]->energy, distributers[i]->alive);

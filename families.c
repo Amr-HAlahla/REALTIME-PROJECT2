@@ -12,20 +12,24 @@ int families_shmid;
 int *families_shm_ptr;
 sem_t *sem_families;
 
-int NUM_OF_FAMILIES;                /* number of families */
-int familyStarvationDeathThreshold; /* starvation level that will cause the family to die */
+int NUM_OF_FAMILIES;                   /* number of families */
+int FAMILY_STARVATION_DEATH_THRESHOLD; /* starvation level that will cause the family to die */
+int FAMILY_DIED_THRESHOLD;             /* Threshold of number of familes that will cause the program to terminate */
 Family **FAMILIES;
 int UP_TO_DATE = 1;
+int num_of_died_families = 0;
+int CRITICAL = 0;
 
 int main(int argc, char *argv[])
 {
-    if (argc != 3)
+    if (argc != 4)
     {
-        fprintf(stderr, "Usage: %s <num_of_families> <family_starvation_death_threshold>\n", argv[0]);
+        fprintf(stderr, "Usage: %s <num_of_families> <FAMILY_STARVATION_DEATH_THRESHOLD> <FAMILY_DIED_THRESHOLD>\n", argv[0]);
         exit(EXIT_FAILURE);
     }
     NUM_OF_FAMILIES = atoi(argv[1]);
-    familyStarvationDeathThreshold = atoi(argv[2]);
+    FAMILY_STARVATION_DEATH_THRESHOLD = atoi(argv[2]);
+    FAMILY_DIED_THRESHOLD = atoi(argv[3]);
     FAMILIES = malloc(sizeof(Family *) * NUM_OF_FAMILIES);
     srand(time(NULL) ^ (getpid() << 16));
     for (int i = 0; i < NUM_OF_FAMILIES; i++)
@@ -61,6 +65,7 @@ void reorderFamilies()
         perror("sem_wait");
         exit(EXIT_FAILURE);
     }
+    CRITICAL = 1;
     if (!UP_TO_DATE)
     {
         // read the families from the shared memory into the local families array, to ensure that the families are up to date
@@ -72,7 +77,7 @@ void reorderFamilies()
         }
         UP_TO_DATE = 1;
     }
-    printf("Reordering families\n");
+    printf("Reordering families\n"); // using bubble sort
     for (int i = 0; i < NUM_OF_FAMILIES; i++)
     {
         for (int j = i + 1; j < NUM_OF_FAMILIES; j++)
@@ -91,7 +96,6 @@ void reorderFamilies()
         printf("Family %d | Needed Bags = %d | Starvation Level = %d | History = %d\n | ALIVE = %d\n",
                i, FAMILIES[i]->needed_bags, FAMILIES[i]->starvation_level, FAMILIES[i]->history, FAMILIES[i]->alive);
     }
-
     // now write the families info into the shared memory of families
     for (int i = 0; i < NUM_OF_FAMILIES; i++)
     {
@@ -103,6 +107,7 @@ void reorderFamilies()
         perror("sem_post");
         exit(EXIT_FAILURE);
     }
+    CRITICAL = 0;
 }
 
 void updateStarvationLevel()
@@ -112,6 +117,7 @@ void updateStarvationLevel()
         perror("sem_wait");
         exit(EXIT_FAILURE);
     }
+    CRITICAL = 1;
     printf("Updating the starvation level\n");
     for (int i = 0; i < NUM_OF_FAMILIES; i++)
     {
@@ -126,11 +132,19 @@ void updateStarvationLevel()
                 FAMILIES[i]->starvation_level += FAMILIES[i]->starvation_level * FAMILIES[i]->ratio;
             }
             FAMILIES[i]->needed_bags += 35 * FAMILIES[i]->ratio;
-            if (FAMILIES[i]->starvation_level >= familyStarvationDeathThreshold)
+            // check if the family has died
+            if (FAMILIES[i]->starvation_level >= FAMILY_STARVATION_DEATH_THRESHOLD)
             {
                 FAMILIES[i]->alive = 0;
                 FAMILIES[i]->starvation_level = -1;
-                printf("Family %d has died\n", i);
+                num_of_died_families++;
+                printf("Family %d has died, starvation level = %d, and Number of died families = %d\n", i, FAMILIES[i]->starvation_level, num_of_died_families);
+                // check if the number of died families has reached the threshold
+                if (num_of_died_families >= FAMILY_DIED_THRESHOLD)
+                {
+                    printf("The number of died families %d, has reached the threshold %d\n", num_of_died_families, FAMILY_DIED_THRESHOLD);
+                    kill(getppid(), SIGTERM);
+                }
             }
         }
     }
@@ -139,6 +153,7 @@ void updateStarvationLevel()
         perror("sem_post");
         exit(EXIT_FAILURE);
     }
+    CRITICAL = 0;
     reorderFamilies();
 }
 
@@ -154,6 +169,13 @@ void signalHandler(int sig)
     else if (sig == SIGTSTP)
     {
         printf("Families received SIGTSTP\n");
+        if (CRITICAL)
+        {
+            if (sem_post(sem_families) == -1)
+            {
+                perror("sem_post");
+            }
+        }
         for (int i = 0; i < NUM_OF_FAMILIES; i++)
         {
             printf("Family %d | Needed Bags = %d | Starvation Level = %d | History = %d | ALIVE = %d\n",
@@ -173,7 +195,6 @@ void signalHandler(int sig)
         printf("Wheat flour bags have been received\n");
         UP_TO_DATE = 0;
         reorderFamilies();
-        // bagsReceived();
     }
 }
 

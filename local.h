@@ -26,13 +26,13 @@
 #define MAX_FAMILIES 50
 
 #define SHM_PLANES "/MEM1"
-#define SHM_SIZE 4096
+#define SHM_SIZE 8192
 #define SEM_CONTAINERS "/SEM1"
 #define SHM_DATA "/MEM2"
 #define SHM_DATA_SIZE 1024
 #define SEM_DATA "/SEM2"
 #define SHM_SAFE "/MEM3"
-#define SHM_SAFE_SIZE 4096
+#define SHM_SAFE_SIZE 8192
 #define SEM_SAFE "/SEM3"
 #define FAMILIES_SHM "/MEM4"
 #define FAMILIES_SHM_SIZE 1024

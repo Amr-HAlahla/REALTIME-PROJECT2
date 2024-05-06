@@ -5,6 +5,8 @@ void setupSignals();
 void signalHandler(int sig);
 void open_shm_sem();
 void splitContainers();
+void replaceWorker(int worker_type);
+// void USR1_Handler(int sig, siginfo_t *info, void *ucontext);
 
 // safe area
 int safe_shmid;
@@ -17,6 +19,7 @@ sem_t *sem_stage2;
 
 int period;
 int splitter_id;
+int CRITICAL = 0;
 
 int main(int argc, char *argv[])
 {
@@ -47,6 +50,7 @@ void splitContainers()
         perror("waitSEM");
         exit(1);
     }
+    CRITICAL = 1;
     int numOfSplittedContainers = ((STAGE2_DATA *)stage2_shm_ptr)->numOfSplittedContainers;
     int numOfBags = ((STAGE2_DATA *)stage2_shm_ptr)->numOfBags;
     int numOFCollctedContainers = ((STAGE2_DATA *)stage2_shm_ptr)->numOFCollectedContainers;
@@ -83,6 +87,61 @@ void splitContainers()
     if (sem_post(sem_safe) == -1)
     {
         perror("postSEM");
+        exit(1);
+    }
+    CRITICAL = 0;
+}
+
+void signalHandler(int sig)
+{
+    if (sig == SIGALRM)
+    {
+        splitContainers();
+        alarm(period);
+    }
+    else if (sig == SIGTSTP)
+    {
+        printf("Splitter received SIGTSTP\n");
+        if (CRITICAL)
+        {
+            if (sem_post(sem_stage2) == -1)
+            {
+                perror("sem_post");
+            }
+            if (sem_post(sem_safe) == -1)
+            {
+                perror("sem_post");
+            }
+        }
+        printf("\033[0;31mExiting splitter\n\033[0m");
+        exit(0);
+    }
+    else if (sig == SIGUSR1)
+    {
+        printf("\033[0;31mSplitter %d will terminate, and replace some worker\n\033[0m", splitter_id);
+        exit(EXIT_SUCCESS); // exit the splitter, it will replace some worker
+    }
+    else
+    {
+        printf("Unknown signal\n");
+    }
+}
+void setupSignals()
+{
+    if (sigset(SIGALRM, signalHandler) == SIG_ERR)
+    {
+        perror("signal");
+        exit(1);
+    }
+
+    if (sigset(SIGTSTP, signalHandler) == SIG_ERR)
+    {
+        perror("signal");
+        exit(1);
+    }
+    if (sigset(SIGUSR1, signalHandler) == SIG_ERR)
+    {
+        perror("signal");
         exit(1);
     }
 }
@@ -123,38 +182,4 @@ void open_shm_sem()
     }
 
     printf("Splitter %d Committee opened shared memory and semaphores\n", splitter_id);
-}
-
-void setupSignals()
-{
-    if (sigset(SIGALRM, signalHandler) == SIG_ERR)
-    {
-        perror("signal");
-        exit(1);
-    }
-
-    if (sigset(SIGTSTP, signalHandler) == SIG_ERR)
-    {
-        perror("signal");
-        exit(1);
-    }
-}
-
-void signalHandler(int sig)
-{
-    if (sig == SIGALRM)
-    {
-        splitContainers();
-        alarm(period);
-    }
-    else if (sig == SIGTSTP)
-    {
-        printf("Splitter received SIGTSTP\n");
-        printf("\033[0;31mExiting splitter\n\033[0m");
-        exit(0);
-    }
-    else
-    {
-        printf("Unknown signal\n");
-    }
 }

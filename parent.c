@@ -14,7 +14,7 @@ typedef struct
     int bagsPerTrip;
     int starvationRateThreshold;
     int simulationDurationThreshold;
-    int familyDeathRateThreshold;
+    int FAMILY_DIED_THRESHOLD;
     int planeCrashThreshold;
     int containerShotDownThreshold;
     int collectingWorkerMartyrThreshold;
@@ -59,6 +59,9 @@ void setupSignals();
 void signalHandler(int sig);
 void create_shm_sem();
 void close_all();
+void test();
+void checkTerminationConditions();
+void killConfirmed();
 
 Config config;
 pid_t *cargoPlanes;
@@ -68,6 +71,13 @@ int *containersPerPlane;
 pid_t *splitter;
 pid_t *distributers;
 pid_t familyProcess;
+pid_t occupationForces;
+// union sigval value;
+int signal_value;
+int numOfCollectorsKilled = 0;
+int numOfDistributersKilled = 0;
+int numOfSplittersMissed = 0;
+int victimCommittee;
 
 int main(int argc, char *argv[])
 {
@@ -104,14 +114,12 @@ int main(int argc, char *argv[])
         sprintf(arg5, "%d", config.minRefillPeriod);
         sprintf(arg6, "%d", config.maxRefillPeriod);
         containersPerPlane[i] = numContainers;
-
         pid = fork();
         if (pid == -1)
         {
             perror("fork");
             exit(1);
         }
-
         if (pid == 0)
         { // Child process
             execl("./cargoPlane", "cargoPlane", arg1, arg2, arg3, arg4, arg5, arg6, NULL);
@@ -129,7 +137,6 @@ int main(int argc, char *argv[])
     {
         kill(cargoPlanes[i], SIGUSR1); // Start dropping containers
     }
-    sleep(1);
     /* ===================================================== */
     monitoringProcess = fork();
     if (monitoringProcess == -1)
@@ -139,13 +146,14 @@ int main(int argc, char *argv[])
     }
     if (monitoringProcess == 0)
     {
-        execl("./monitor", "monitor", NULL);
+        int containersThreshold = config.containerShotDownThreshold;
+        sprintf(arg1, "%d", containersThreshold);
+        execl("./monitor", "monitor", arg1, NULL);
         perror("execl");
         exit(1);
     }
     sleep(2);
     kill(monitoringProcess, SIGALRM); // Start monitoring
-    sleep(1);
     /* create collecting committees ===================================================== */
     for (int i = 0; i < config.numCollectingCommittees; i++)
     {
@@ -157,6 +165,23 @@ int main(int argc, char *argv[])
         }
         if (pid == 0)
         {
+            /* open file to redirect stdout  filename = "collecting_%d.log" */
+            char filename[50];
+            sprintf(filename, "collecting_%d.log", i);
+            int file = open(filename, O_WRONLY | O_CREAT | O_TRUNC, 0666);
+            if (file == -1)
+            {
+                perror("open");
+                exit(EXIT_FAILURE);
+            }
+            // redirect the standard output to the file
+            int fileDescriptor = dup2(file, STDOUT_FILENO);
+            if (fileDescriptor == -1)
+            {
+                perror("dup2");
+                exit(EXIT_FAILURE);
+            }
+            close(file);
             int committee_id = i;
             int committee_size = config.workersPerCommittee;
             int min_energy = config.WORKER_MIN_ENERGY;
@@ -176,6 +201,7 @@ int main(int argc, char *argv[])
             collectingCommittees[i] = pid;
         }
     }
+    sleep(1);
     // create splitters
     for (int i = 0; i < config.NUM_SPLITTING_WORKERS; i++)
     {
@@ -275,11 +301,41 @@ int main(int argc, char *argv[])
         // prepare args
         sprintf(arg1, "%d", config.NUM_OF_FAMILIES);
         sprintf(arg2, "%d", config.familyStarvationDeathThreshold);
-        execl("./families", "families", arg1, arg2, NULL);
+        sprintf(arg3, "%d", config.FAMILY_DIED_THRESHOLD);
+        execl("./families", "families", arg1, arg2, arg3, NULL);
         perror("execl");
         exit(1);
     }
-    sleep(3);
+    sleep(1);
+    // create the occpuation forces process
+    occupationForces = fork();
+    if (occupationForces == -1)
+    {
+        perror("fork");
+        exit(1);
+    }
+    if (occupationForces == 0)
+    {
+        // redirect the output into a file occupationForces.log
+        int file = open("occupationForces.log", O_WRONLY | O_CREAT | O_TRUNC, 0666);
+        if (file == -1)
+        {
+            perror("open");
+            exit(EXIT_FAILURE);
+        }
+        // redirect the standard output to the file
+        int fileDescriptor = dup2(file, STDOUT_FILENO);
+        if (fileDescriptor == -1)
+        {
+            perror("dup2");
+            exit(EXIT_FAILURE);
+        }
+        close(file);
+        execl("./occupation", "occupation", NULL);
+        perror("execl");
+        exit(1);
+    }
+    sleep(2);
     for (int i = 0; i < config.numCollectingCommittees; i++)
     {
         kill(collectingCommittees[i], SIGALRM); // Start collecting
@@ -297,14 +353,351 @@ int main(int argc, char *argv[])
     {
         kill(distributers[i], SIGALRM);
     }
-    sleep(2);
+    sleep(5);
     // start families process
     kill(familyProcess, SIGALRM);
+    sleep(1);
+    // start occupation forces process
+    kill(occupationForces, SIGALRM);
+    sleep(1);
+    // redirect the output into a file parent.log
+    int file = open("parent.log", O_WRONLY | O_CREAT | O_TRUNC, 0666);
+    if (file == -1)
+    {
+        perror("open");
+        exit(EXIT_FAILURE);
+    }
+    // redirect the standard output to the file
+    int fileDescriptor = dup2(file, STDOUT_FILENO);
+    if (fileDescriptor == -1)
+    {
+        perror("dup2");
+        exit(EXIT_FAILURE);
+    }
+    close(file);
+    alarm(config.simulationDurationThreshold);
+    while (1)
+    {
+        pause();
+    }
     for (int i = 0; i < config.numCargoPlanes; i++)
     {
         waitpid(cargoPlanes[i], NULL, 0);
     }
     return 0;
+}
+
+void checkTerminationConditions()
+{
+    if (numOfCollectorsKilled >= config.collectingWorkerMartyrThreshold)
+    {
+        printf("\033[0;31mNumber of collecting workers killed %d, exceeded the threshold, Simulation will be terminated\n\033[0m", numOfCollectorsKilled);
+        test();
+    }
+    if (numOfDistributersKilled >= config.distributingWorkerMartyrThreshold)
+    {
+        printf("\033[0;31mNumber of distributing workers killed %d, exceeded the threshold, Simulation will be terminated\n\033[0m", numOfDistributersKilled);
+        test();
+    }
+}
+
+void signalHandler(int sig)
+{
+    if (sig == SIGUSR1)
+    {
+        // choose a random value to determine which worker type to kill
+        signal_value = rand() % 2 == 0 ? 1 : 2;
+        if (signal_value == 1)
+        {
+            // try to kill a worker of the collecting committee
+            victimCommittee = rand() % config.numCollectingCommittees;
+            kill(collectingCommittees[victimCommittee], SIGUSR1);
+        }
+        else if (signal_value == 2)
+        {
+            // try to kill a worker of the distributing committee
+            victimCommittee = rand() % config.NUM_DITRIBUTING_COMMITTEES;
+            kill(distributers[victimCommittee], SIGUSR1);
+        }
+    }
+    else if (sig == SIGUSR2)
+    {
+        killConfirmed(); // unfornately the worker has been killed
+    }
+    else if (sig == SIGINT)
+    {
+        // number of containers have been shot down exceeded the threshold
+        printf("\033[0;31mNumber of containers shot down exceeded the threshold, Simulation will be terminated\n\033[0m");
+        test();
+    }
+    else if (sig == SIGALRM)
+    {
+        printf("The app has been running for %d seconds, Simulation will be terminated\n", config.simulationDurationThreshold);
+        test();
+    }
+    else if (sig == SIGTERM)
+    {
+        // number of families died exceeded the threshold
+        printf("\033[0;31mNumber of families died exceeded the threshold, Simulation will be terminated\n\033[0m");
+        test();
+    }
+}
+
+void killConfirmed()
+{
+    // keep track of the number of killed workers
+    if (signal_value == 1)
+    {
+        numOfCollectorsKilled++;
+        printf("\033[0;31mNumber of collecting workers killed %d\n\033[0m", numOfCollectorsKilled);
+    }
+    else if (signal_value == 2)
+    {
+        numOfDistributersKilled++;
+        printf("\033[0;31mNumber of distributing workers killed %d\n\033[0m", numOfDistributersKilled);
+    }
+    checkTerminationConditions();
+    if (numOfSplittersMissed == config.NUM_SPLITTING_WORKERS)
+    {
+        printf("\033[0;31mAll splitters have been missed, No replacement will be done\n\033[0m");
+    }
+    else
+    {
+        // send a signal to the splitter process to make some splitter replace the killed worker
+        int splitter_id = rand() % config.NUM_SPLITTING_WORKERS;
+        // check if this splitter is alive and not missed in previous replacing process
+        while (splitter[splitter_id] == -1)
+        {
+            splitter_id = rand() % config.NUM_SPLITTING_WORKERS;
+        }
+        kill(splitter[splitter_id], SIGUSR1); // notify the splitter to replace a worker
+        numOfSplittersMissed++;               // keep track of the number of missed splitters
+        splitter[splitter_id] = -1;           // mark this splitter as missed
+        // now the parent should send a signal to notify the committee to replace the killed worker
+        if (signal_value == 1)
+        {
+            // notify the collecting committee that there is a new worker will join the committee
+            kill(collectingCommittees[victimCommittee], SIGUSR2);
+        }
+        else if (signal_value == 2)
+        {
+            // notify the distributing committee that there is a new worker will join the committee
+            kill(distributers[victimCommittee], SIGUSR2);
+        }
+    }
+}
+
+void setupSignals()
+{
+    if (sigset(SIGUSR1, signalHandler) == SIG_ERR)
+    {
+        perror("signal");
+        exit(1);
+    }
+    if (sigset(SIGUSR2, signalHandler) == SIG_ERR)
+    {
+        perror("signal");
+        exit(1);
+    }
+    if (sigset(SIGINT, signalHandler) == SIG_ERR)
+    {
+        perror("signal");
+        exit(1);
+    }
+    if (sigset(SIGALRM, signalHandler) == SIG_ERR)
+    {
+        perror("signal");
+        exit(1);
+    }
+    if (sigset(SIGTERM, signalHandler) == SIG_ERR)
+    {
+        perror("signal");
+        exit(1);
+    }
+}
+
+void test()
+{
+    // send TSTP signal to the Cargo Planes
+    for (int i = 0; i < config.numCargoPlanes; i++)
+    {
+        printf("Parent sent SIGTSTP to plane %d with PID %d\n", i, cargoPlanes[i]);
+        kill(cargoPlanes[i], SIGTSTP);
+    }
+    // send TSTP signal to the monitoring process
+    kill(monitoringProcess, SIGTSTP);
+    // send TSTP signal to all collecting committees
+    for (int i = 0; i < config.numCollectingCommittees; i++)
+    {
+        printf("Parent sent SIGTSTP to committee %d with PID %d\n", i, collectingCommittees[i]);
+        kill(collectingCommittees[i], SIGTSTP);
+    }
+    sleep(1);
+    // send TSTP signal to all splitter processes
+    for (int i = 0; i < config.NUM_SPLITTING_WORKERS; i++)
+    {
+        if (splitter[i] != -1)
+        {
+            printf("Parent sent SIGTSTP to splitter %d with PID %d\n", i, splitter[i]);
+            kill(splitter[i], SIGTSTP);
+        }
+    }
+    sleep(1);
+    // send TSTP signal to all distributers
+    for (int i = 0; i < config.NUM_DITRIBUTING_COMMITTEES; i++)
+    {
+        printf("Parent sent SIGTSTP to distributer %d with PID %d\n", i, distributers[i]);
+        kill(distributers[i], SIGTSTP);
+    }
+    // send TSTP signal to families process
+    printf("Parent sent SIGTSTP to families process with PID %d\n", familyProcess);
+    kill(familyProcess, SIGTSTP);
+
+    // if (sem_wait(sem_data) == -1)
+    // {
+    //     perror("sem_wait");
+    //     exit(1);
+    // }
+    int totalContainersDropped = ((SharedData *)data_shm)->totalContainersDropped;
+    int totalLandedContainers = ((SharedData *)data_shm)->totalLandedContainers;
+    int totalCrashedContainers = ((SharedData *)data_shm)->numOfCrashedContainers;
+    int collectedContainers = ((SharedData *)data_shm)->cleectedContainers;
+    printf("Parent Entered data critical section\n");
+    printf("------------------------------------------\n");
+    // if (sem_wait(sem_containers) == -1)
+    // {
+    //     perror("sem_wait");
+    //     exit(1);
+    // }
+    // if (sem_wait(sem_safe) == -1)
+    // {
+    //     perror("sem_wait");
+    //     exit(1);
+    // }
+    printf("Parent entered containers critical section\n");
+    printf("==========================================\n");
+    int summation = 0;
+    for (int i = 0; i < config.numCargoPlanes; i++)
+    {
+        summation += containersPerPlane[i];
+    }
+    summation *= 3;
+    int *temp = containers_shm;
+    printf("Total Containers %d\n", summation);
+    printf("Containers dropped: %d\n", totalContainersDropped);
+    printf("Landed containers: %d\n", totalLandedContainers);
+    printf("Crashed containers: %d\n", totalCrashedContainers);
+    printf("Collected containers: %d\n", collectedContainers);
+    // read containers of the first cargo plane from shared memory
+    printf("\033[0;33mNumber of Containers in the Air = %d\n\033[0m", (totalContainersDropped - totalLandedContainers - totalCrashedContainers));
+    int index = 0;
+    while ((index < totalContainersDropped))
+    {
+        FlourContainer *container = (FlourContainer *)temp;
+        if (container->crahshed || container->landed || container->collected)
+        {
+            // printf("Container %d is not in the Air\n", index);
+            temp += sizeof(FlourContainer);
+            index++;
+            continue;
+        }
+        printf("\033[0;32mContainer %d: | Quantity=  %d | height = %d | Collected = %d | Landed = %d | Crahsed = %d | \n\033[0m",
+               index, container->quantity, container->height, container->collected, container->landed, container->crahshed);
+        index++;
+        temp += sizeof(FlourContainer);
+    }
+    printf("/|/|/|/|/|/|/|/|/|/|/|/|/|/|/|/|/|/|/|/|/|/|/|/|\n");
+    printf("\033[0;33m|| Number of Containers in the Landed Area = %d ||\n\033[0m", totalLandedContainers - collectedContainers);
+    temp = containers_shm;
+    index = 0;
+    while (index < totalContainersDropped)
+    {
+        FlourContainer *container = (FlourContainer *)temp;
+        if (container->landed && !container->collected && !container->crahshed)
+        {
+            printf("\033[0;32mContainer %d: | Quantity=  %d | height = %d | Collected = %d | Landed = %d | Crahsed = %d | \n\033[0m",
+                   index, container->quantity, container->height, container->collected, container->landed, container->crahshed);
+        }
+        temp += sizeof(FlourContainer);
+        index++;
+    }
+    printf("/|/|/|/|/|/|/|/|/|/|/|/|/|/|/|/|/|/|/|/|/|/|/|/|\n");
+    int collectedBags = 0;
+    printf("\033[0;33m|| Number of Containers in the Safe Area = %d ||\n\033[0m", collectedContainers);
+    temp = safe_shm_ptr;
+    index = 0;
+    while (index < collectedContainers)
+    {
+        FlourContainer *container = (FlourContainer *)temp;
+        if (container->collected)
+        {
+            printf("\033[0;32mContainer %d: | Quantity=  %d | height = %d | Collected = %d | Landed = %d | Crahsed = %d | \n\033[0m",
+                   index, container->quantity, container->height, container->collected, container->landed, container->crahshed);
+            collectedBags += container->quantity;
+        }
+        temp += sizeof(FlourContainer);
+        index++;
+    }
+    printf("\033[0;33m|| Number of Bags in the Safe Area = %d ||\n\033[0m", collectedBags);
+    // update shared data with the new values
+    printf("/|/|/|/|/|/|/|/|/|/|/|/|/|/|/|/|/|/|/|/|/|/|/|/|\n");
+    ((SharedData *)data_shm)->totalContainersDropped = totalContainersDropped;
+    // print number of splitted containers and the total weight splitted
+    // if (sem_wait(sem_stage2) == -1)
+    // {
+    //     perror("sem_wait");
+    //     exit(1);
+    // }
+    STAGE2_DATA *stage2 = (STAGE2_DATA *)stage2_shm;
+    printf("\033[0;33m|| Number of Containers have been splitted = %d ||\n\033[0m", stage2->numOfSplittedContainers);
+    printf("\033[0;33m|| Number of available Bags = %d ||\n\033[0m", stage2->numOfBags);
+    printf("\033[0;33m|| Number of distributed Bags = %d ||\n\033[0m", stage2->distributedBags);
+    // if (sem_post(sem_stage2) == -1)
+    // {
+    //     perror("sem_post");
+    //     exit(1);
+    // }
+    printf("\033[0;33mAfter collection process:\n\033[0m", totalContainersDropped);
+    printf("Total containers dropped: %d\n Total landed containers: %d\n Total crashed containers: %d\n Total collected containers: %d Total splitted containers: %d\n",
+           totalContainersDropped, totalLandedContainers, totalCrashedContainers, collectedContainers, stage2->numOfSplittedContainers);
+    if (totalContainersDropped == summation)
+    {
+        printf("\033[0;31mSimulation Done Correctly, No missed containers\n\033[0m");
+    }
+    else
+    {
+        printf("\033[0;31mSimulation Done Incorrectly, Missed containers\n\033[0m");
+    }
+    // if (sem_post(sem_containers) == -1)
+    // {
+    //     perror("sem_post");
+    //     exit(1);
+    // }
+    // if (sem_post(sem_data) == -1)
+    // {
+    //     perror("sem_post");
+    //     exit(1);
+    // }
+    // if (sem_post(sem_safe) == -1)
+    // {
+    //     perror("sem_post");
+    //     exit(1);
+    // }
+    printf("Parent exited the critical section\n");
+    // kill all child processes
+    for (int i = 0; i < config.numCargoPlanes; i++)
+    {
+        kill(cargoPlanes[i], SIGKILL);
+    }
+    for (int i = 0; i < config.numCollectingCommittees; i++)
+    {
+        kill(collectingCommittees[i], SIGKILL);
+    }
+    kill(monitoringProcess, SIGKILL);
+    // remove all shared memory and semaphores
+    close_all();
+    printf("All child processes killed, parent process will exit now\n");
+    exit(0);
 }
 
 void initialize_shared_data()
@@ -350,272 +743,80 @@ void initialize_shared_data()
     printf("Shared data initialized successfully\n");
 }
 
-void signalHandler(int sig)
+// Function to read configuration.txt
+void loadConfiguration(const char *filename, Config *config)
 {
-    if (sig == SIGUSR1)
+    FILE *file = fopen(filename, "r");
+    if (file == NULL)
     {
-        // send TSTP signal to the monitoring process
-        kill(monitoringProcess, SIGTSTP);
-        // send TSTP signal to all collecting committees
-        for (int i = 0; i < config.numCollectingCommittees; i++)
-        {
-            printf("Parent sent SIGTSTP to committee %d with PID %d\n", i, collectingCommittees[i]);
-            kill(collectingCommittees[i], SIGTSTP);
-        }
-        sleep(1);
-        // send TSTP signal to all splitter processes
-        for (int i = 0; i < config.NUM_SPLITTING_WORKERS; i++)
-        {
-            printf("Parent sent SIGTSTP to splitter %d with PID %d\n", i, splitter[i]);
-            kill(splitter[i], SIGTSTP);
-        }
-        sleep(1);
-        // send TSTP signal to all distributers
-        for (int i = 0; i < config.NUM_DITRIBUTING_COMMITTEES; i++)
-        {
-            printf("Parent sent SIGTSTP to distributer %d with PID %d\n", i, distributers[i]);
-            kill(distributers[i], SIGTSTP);
-        }
-        // send TSTP signal to families process
-        printf("Parent sent SIGTSTP to families process with PID %d\n", familyProcess);
-        kill(familyProcess, SIGTSTP);
+        perror("Error opening the configuration file");
+        exit(EXIT_FAILURE);
+    }
 
-        if (sem_wait(sem_data) == -1)
-        {
-            perror("sem_wait");
-            exit(1);
-        }
-        int totalContainersDropped = ((SharedData *)data_shm)->totalContainersDropped;
-        int totalLandedContainers = ((SharedData *)data_shm)->totalLandedContainers;
-        int totalCrashedContainers = ((SharedData *)data_shm)->numOfCrashedContainers;
-        int collectedContainers = ((SharedData *)data_shm)->cleectedContainers;
-        printf("Parent Entered data critical section\n");
-        printf("------------------------------------------\n");
-        if (sem_wait(sem_containers) == -1)
-        {
-            perror("sem_wait");
-            exit(1);
-        }
-        if (sem_wait(sem_safe) == -1)
-        {
-            perror("sem_wait");
-            exit(1);
-        }
-        printf("Parent entered containers critical section\n");
-        printf("==========================================\n");
-        int summation = 0;
-        for (int i = 0; i < config.numCargoPlanes; i++)
-        {
-            summation += containersPerPlane[i];
-        }
-        summation *= 3;
-        int *temp = containers_shm;
-        printf("Total Containers %d\n", summation);
-        printf("Containers dropped: %d\n", totalContainersDropped);
-        printf("Landed containers: %d\n", totalLandedContainers);
-        printf("Crashed containers: %d\n", totalCrashedContainers);
-        printf("Collected containers: %d\n", collectedContainers);
-        // read containers of the first cargo plane from shared memory
-        printf("\033[0;33mNumber of Containers in the Air = %d\n\033[0m", (totalContainersDropped - totalLandedContainers - totalCrashedContainers));
-        int index = 0;
-        while ((index < totalContainersDropped))
-        {
-            FlourContainer *container = (FlourContainer *)temp;
-            if (container->crahshed || container->landed || container->collected)
-            {
-                // printf("Container %d is not in the Air\n", index);
-                temp += sizeof(FlourContainer);
-                index++;
-                continue;
-            }
-            printf("\033[0;32mContainer %d: | Quantity=  %d | height = %d | Collected = %d | Landed = %d | Crahsed = %d | \n\033[0m",
-                   index, container->quantity, container->height, container->collected, container->landed, container->crahshed);
-            index++;
-            temp += sizeof(FlourContainer);
-        }
-        printf("/|/|/|/|/|/|/|/|/|/|/|/|/|/|/|/|/|/|/|/|/|/|/|/|\n");
-        printf("\033[0;33m|| Number of Containers in the Landed Area = %d ||\n\033[0m", totalLandedContainers - collectedContainers);
-        temp = containers_shm;
-        index = 0;
-        while (index < totalContainersDropped)
-        {
-            FlourContainer *container = (FlourContainer *)temp;
-            if (container->landed && !container->collected && !container->crahshed)
-            {
-                printf("\033[0;32mContainer %d: | Quantity=  %d | height = %d | Collected = %d | Landed = %d | Crahsed = %d | \n\033[0m",
-                       index, container->quantity, container->height, container->collected, container->landed, container->crahshed);
-            }
-            temp += sizeof(FlourContainer);
-            index++;
-        }
-        printf("/|/|/|/|/|/|/|/|/|/|/|/|/|/|/|/|/|/|/|/|/|/|/|/|\n");
-        int collectedBags = 0;
-        printf("\033[0;33m|| Number of Containers in the Safe Area = %d ||\n\033[0m", collectedContainers);
-        temp = safe_shm_ptr;
-        index = 0;
-        while (index < collectedContainers)
-        {
-            FlourContainer *container = (FlourContainer *)temp;
-            if (container->collected)
-            {
-                printf("\033[0;32mContainer %d: | Quantity=  %d | height = %d | Collected = %d | Landed = %d | Crahsed = %d | \n\033[0m",
-                       index, container->quantity, container->height, container->collected, container->landed, container->crahshed);
-                collectedBags += container->quantity;
-            }
-            temp += sizeof(FlourContainer);
-            index++;
-        }
-        printf("\033[0;33m|| Number of Bags in the Safe Area = %d ||\n\033[0m", collectedBags);
-        // update shared data with the new values
-        printf("/|/|/|/|/|/|/|/|/|/|/|/|/|/|/|/|/|/|/|/|/|/|/|/|\n");
-        ((SharedData *)data_shm)->totalContainersDropped = totalContainersDropped;
-        // print number of splitted containers and the total weight splitted
-        if (sem_wait(sem_stage2) == -1)
-        {
-            perror("sem_wait");
-            exit(1);
-        }
-        STAGE2_DATA *stage2 = (STAGE2_DATA *)stage2_shm;
-        printf("\033[0;33m|| Number of Containers have been splitted = %d ||\n\033[0m", stage2->numOfSplittedContainers);
-        printf("\033[0;33m|| Number of available Bags = %d ||\n\033[0m", stage2->numOfBags);
-        printf("\033[0;33m|| Number of distributed Bags = %d ||\n\033[0m", stage2->distributedBags);
-        if (sem_post(sem_stage2) == -1)
-        {
-            perror("sem_post");
-            exit(1);
-        }
-        printf("\033[0;33mAfter collection process:\n\033[0m", totalContainersDropped);
-        printf("Total containers dropped: %d\n Total landed containers: %d\n Total crashed containers: %d\n Total collected containers: %d Total splitted containers: %d\n",
-               totalContainersDropped, totalLandedContainers, totalCrashedContainers, collectedContainers, stage2->numOfSplittedContainers);
-        if (totalContainersDropped == summation)
-        {
-            printf("\033[0;31mSimulation Done Correctly, No missed containers\n\033[0m");
-        }
-        else
-        {
-            printf("\033[0;31mSimulation Done Incorrectly, Missed containers\n\033[0m");
-        }
-        if (sem_post(sem_containers) == -1)
-        {
-            perror("sem_post");
-            exit(1);
-        }
-        if (sem_post(sem_data) == -1)
-        {
-            perror("sem_post");
-            exit(1);
-        }
-        if (sem_post(sem_safe) == -1)
-        {
-            perror("sem_post");
-            exit(1);
-        }
-        printf("Parent exited the critical section\n");
-        // kill all child processes
-        for (int i = 0; i < config.numCargoPlanes; i++)
-        {
-            kill(cargoPlanes[i], SIGKILL);
-        }
-        for (int i = 0; i < config.numCollectingCommittees; i++)
-        {
-            kill(collectingCommittees[i], SIGKILL);
-        }
-        kill(monitoringProcess, SIGKILL);
-        // remove all shared memory and semaphores
-        close_all();
-        printf("All child processes killed, parent process will exit now\n");
-        exit(0);
-    }
-}
-
-void close_all()
-{
-    // remove semaphores
-    if (sem_close(sem_containers) == -1)
+    char buffer[256];
+    while (fgets(buffer, sizeof(buffer), file))
     {
-        perror("sem_close");
-        exit(1);
+        char key[50];
+        int value;
+        if (buffer[0] == '#' || buffer[0] == '\n')
+            continue; // Ignore comments and empty lines
+        if (sscanf(buffer, "%s = %d", key, &value) == 2)
+        {
+            if (strcmp(key, "NUM_CARGO_PLANES") == 0)
+                config->numCargoPlanes = value;
+            else if (strcmp(key, "MIN_CONTAINERS_PER_PLANE") == 0)
+                config->minContainersPerPlane = value;
+            else if (strcmp(key, "MAX_CONTAINERS_PER_PLANE") == 0)
+                config->maxContainersPerPlane = value;
+            else if (strcmp(key, "MIN_DROP_FREQUENCY") == 0)
+                config->minDropFrequency = value;
+            else if (strcmp(key, "MAX_DROP_FREQUENCY") == 0)
+                config->maxDropFrequency = value;
+            else if (strcmp(key, "MIN_REFILL_PERIOD") == 0)
+                config->minRefillPeriod = value;
+            else if (strcmp(key, "MAX_REFILL_PERIOD") == 0)
+                config->maxRefillPeriod = value;
+            else if (strcmp(key, "NUM_COLLECTING_COMMITTEES") == 0)
+                config->numCollectingCommittees = value;
+            else if (strcmp(key, "WORKERS_PER_COMMITTEE") == 0)
+                config->workersPerCommittee = value;
+            else if (strcmp(key, "MISSILE_HIT_PROBABILITY") == 0)
+                config->missileHitProbability = value;
+            else if (strcmp(key, "BAGS_PER_TRIP") == 0)
+                config->bagsPerTrip = value;
+            else if (strcmp(key, "SIMULATION_DURATION_THRESHOLD") == 0)
+                config->simulationDurationThreshold = value;
+            else if (strcmp(key, "FAMILY_DIED_THRESHOLD") == 0)
+                config->FAMILY_DIED_THRESHOLD = value;
+            else if (strcmp(key, "PLANE_CRASH_THRESHOLD") == 0)
+                config->planeCrashThreshold = value;
+            else if (strcmp(key, "CONTAINER_SHOT_DOWN_THRESHOLD") == 0)
+                config->containerShotDownThreshold = value;
+            else if (strcmp(key, "COLLECTING_WORKER_MARTYR_THRESHOLD") == 0)
+                config->collectingWorkerMartyrThreshold = value;
+            else if (strcmp(key, "DISTRIBUTING_WORKER_MARTYR_THRESHOLD") == 0)
+                config->distributingWorkerMartyrThreshold = value;
+            else if (strcmp(key, "FAMILY_STARVATION_DEATH_THRESHOLD") == 0)
+                config->familyStarvationDeathThreshold = value;
+            else if (strcmp(key, "WORKER_MIN_ENERGY") == 0)
+                config->WORKER_MIN_ENERGY = value;
+            else if (strcmp(key, "WORKER_MAX_ENERGY") == 0)
+                config->WORKER_MAX_ENERGY = value;
+            else if (strcmp(key, "WORKER_ENERGY_PER_TRIP") == 0)
+                config->WORKER_ENERGY_PER_TRIP = value;
+            else if (strcmp(key, "NUM_DITRIBUTING_COMMITTEES") == 0)
+                config->NUM_DITRIBUTING_COMMITTEES = value;
+            else if (strcmp(key, "DISTRIBUTING_WORKERS_PER_COMMITTEE") == 0)
+                config->DISTRIBUTING_WORKERS_PER_COMMITTEE = value;
+            else if (strcmp(key, "DISTRIBUTING_WORKER_CAPACITY") == 0)
+                config->DISTRIBUTING_WORKER_CAPACITY = value;
+            else if (strcmp(key, "NUM_SPLITTING_WORKERS") == 0)
+                config->NUM_SPLITTING_WORKERS = value;
+            else if (strcmp(key, "NUM_OF_FAMILIES") == 0)
+                config->NUM_OF_FAMILIES = value;
+        }
     }
-    if (sem_close(sem_data) == -1)
-    {
-        perror("sem_close");
-        exit(1);
-    }
-    if (sem_close(sem_safe) == -1)
-    {
-        perror("sem_close");
-        exit(1);
-    }
-    if (sem_close(sem_stage2) == -1)
-    {
-        perror("sem_close");
-        exit(1);
-    }
-    if (sem_close(sem_families) == -1)
-    {
-        perror("sem_close");
-        exit(1);
-    }
-    if (sem_unlink(SEM_CONTAINERS) == -1)
-    {
-        perror("sem_unlink");
-        exit(1);
-    }
-    if (sem_unlink(SEM_DATA) == -1)
-    {
-        perror("sem_unlink");
-        exit(1);
-    }
-    if (sem_unlink(SEM_SAFE) == -1)
-    {
-        perror("sem_unlink");
-        exit(1);
-    }
-    if (sem_unlink(SEM_STAGE2) == -1)
-    {
-        perror("sem_unlink");
-        exit(1);
-    }
-    if (sem_unlink(SEM_FAMILIES) == -1)
-    {
-        perror("sem_unlink");
-        exit(1);
-    }
-    // remove shared memory
-    if (shm_unlink(SHM_PLANES) == -1)
-    {
-        perror("shm_unlink");
-        exit(1);
-    }
-    if (shm_unlink(SHM_DATA) == -1)
-    {
-        perror("shm_unlink");
-        exit(1);
-    }
-    if (shm_unlink(SHM_SAFE) == -1)
-    {
-        perror("shm_unlink");
-        exit(1);
-    }
-    if (shm_unlink(SHM_STAGE2) == -1)
-    {
-        perror("shm_unlink");
-        exit(1);
-    }
-    if (shm_unlink(FAMILIES_SHM) == -1)
-    {
-        perror("shm_unlink");
-        exit(1);
-    }
-    printf("All shared memory and semaphores removed successfully\n");
-
-    // free allocated memory
-    free(cargoPlanes);
-    free(collectingCommittees);
-    free(containersPerPlane);
-    free(distributers);
-    free(splitter);
-    printf("All allocated memory freed successfully\n");
+    fclose(file);
 }
 
 void create_shm_sem()
@@ -755,94 +956,92 @@ void create_shm_sem()
     printf("Shared memory and semaphores created successfully\n");
 }
 
-void setupSignals()
+void close_all()
 {
-    if (sigset(SIGUSR1, signalHandler) == SIG_ERR)
+    // remove semaphores
+    if (sem_close(sem_containers) == -1)
     {
-        perror("signal");
+        perror("sem_close");
         exit(1);
     }
-    if (sigset(SIGUSR2, signalHandler) == SIG_ERR)
+    if (sem_close(sem_data) == -1)
     {
-        perror("signal");
+        perror("sem_close");
         exit(1);
     }
-}
-
-// Function to read configuration.txt
-void loadConfiguration(const char *filename, Config *config)
-{
-    FILE *file = fopen(filename, "r");
-    if (file == NULL)
+    if (sem_close(sem_safe) == -1)
     {
-        perror("Error opening the configuration file");
-        exit(EXIT_FAILURE);
+        perror("sem_close");
+        exit(1);
     }
-
-    char buffer[256];
-    while (fgets(buffer, sizeof(buffer), file))
+    if (sem_close(sem_stage2) == -1)
     {
-        char key[50];
-        int value;
-        if (buffer[0] == '#' || buffer[0] == '\n')
-            continue; // Ignore comments and empty lines
-        if (sscanf(buffer, "%s = %d", key, &value) == 2)
-        {
-            if (strcmp(key, "NUM_CARGO_PLANES") == 0)
-                config->numCargoPlanes = value;
-            else if (strcmp(key, "MIN_CONTAINERS_PER_PLANE") == 0)
-                config->minContainersPerPlane = value;
-            else if (strcmp(key, "MAX_CONTAINERS_PER_PLANE") == 0)
-                config->maxContainersPerPlane = value;
-            else if (strcmp(key, "MIN_DROP_FREQUENCY") == 0)
-                config->minDropFrequency = value;
-            else if (strcmp(key, "MAX_DROP_FREQUENCY") == 0)
-                config->maxDropFrequency = value;
-            else if (strcmp(key, "MIN_REFILL_PERIOD") == 0)
-                config->minRefillPeriod = value;
-            else if (strcmp(key, "MAX_REFILL_PERIOD") == 0)
-                config->maxRefillPeriod = value;
-            else if (strcmp(key, "NUM_COLLECTING_COMMITTEES") == 0)
-                config->numCollectingCommittees = value;
-            else if (strcmp(key, "WORKERS_PER_COMMITTEE") == 0)
-                config->workersPerCommittee = value;
-            else if (strcmp(key, "MISSILE_HIT_PROBABILITY") == 0)
-                config->missileHitProbability = value;
-            else if (strcmp(key, "BAGS_PER_TRIP") == 0)
-                config->bagsPerTrip = value;
-            else if (strcmp(key, "STARVATION_RATE_THRESHOLD") == 0)
-                config->starvationRateThreshold = value;
-            else if (strcmp(key, "SIMULATION_DURATION_THRESHOLD") == 0)
-                config->simulationDurationThreshold = value;
-            else if (strcmp(key, "FAMILY_DEATH_RATE_THRESHOLD") == 0)
-                config->familyDeathRateThreshold = value;
-            else if (strcmp(key, "PLANE_CRASH_THRESHOLD") == 0)
-                config->planeCrashThreshold = value;
-            else if (strcmp(key, "CONTAINER_SHOT_DOWN_THRESHOLD") == 0)
-                config->containerShotDownThreshold = value;
-            else if (strcmp(key, "COLLECTING_WORKER_MARTYR_THRESHOLD") == 0)
-                config->collectingWorkerMartyrThreshold = value;
-            else if (strcmp(key, "DISTRIBUTING_WORKER_MARTYR_THRESHOLD") == 0)
-                config->distributingWorkerMartyrThreshold = value;
-            else if (strcmp(key, "FAMILY_STARVATION_DEATH_THRESHOLD") == 0)
-                config->familyStarvationDeathThreshold = value;
-            else if (strcmp(key, "WORKER_MIN_ENERGY") == 0)
-                config->WORKER_MIN_ENERGY = value;
-            else if (strcmp(key, "WORKER_MAX_ENERGY") == 0)
-                config->WORKER_MAX_ENERGY = value;
-            else if (strcmp(key, "WORKER_ENERGY_PER_TRIP") == 0)
-                config->WORKER_ENERGY_PER_TRIP = value;
-            else if (strcmp(key, "NUM_DITRIBUTING_COMMITTEES") == 0)
-                config->NUM_DITRIBUTING_COMMITTEES = value;
-            else if (strcmp(key, "DISTRIBUTING_WORKERS_PER_COMMITTEE") == 0)
-                config->DISTRIBUTING_WORKERS_PER_COMMITTEE = value;
-            else if (strcmp(key, "DISTRIBUTING_WORKER_CAPACITY") == 0)
-                config->DISTRIBUTING_WORKER_CAPACITY = value;
-            else if (strcmp(key, "NUM_SPLITTING_WORKERS") == 0)
-                config->NUM_SPLITTING_WORKERS = value;
-            else if (strcmp(key, "NUM_OF_FAMILIES") == 0)
-                config->NUM_OF_FAMILIES = value;
-        }
+        perror("sem_close");
+        exit(1);
     }
-    fclose(file);
+    if (sem_close(sem_families) == -1)
+    {
+        perror("sem_close");
+        exit(1);
+    }
+    if (sem_unlink(SEM_CONTAINERS) == -1)
+    {
+        perror("sem_unlink");
+        exit(1);
+    }
+    if (sem_unlink(SEM_DATA) == -1)
+    {
+        perror("sem_unlink");
+        exit(1);
+    }
+    if (sem_unlink(SEM_SAFE) == -1)
+    {
+        perror("sem_unlink");
+        exit(1);
+    }
+    if (sem_unlink(SEM_STAGE2) == -1)
+    {
+        perror("sem_unlink");
+        exit(1);
+    }
+    if (sem_unlink(SEM_FAMILIES) == -1)
+    {
+        perror("sem_unlink");
+        exit(1);
+    }
+    // remove shared memory
+    if (shm_unlink(SHM_PLANES) == -1)
+    {
+        perror("shm_unlink");
+        exit(1);
+    }
+    if (shm_unlink(SHM_DATA) == -1)
+    {
+        perror("shm_unlink");
+        exit(1);
+    }
+    if (shm_unlink(SHM_SAFE) == -1)
+    {
+        perror("shm_unlink");
+        exit(1);
+    }
+    if (shm_unlink(SHM_STAGE2) == -1)
+    {
+        perror("shm_unlink");
+        exit(1);
+    }
+    if (shm_unlink(FAMILIES_SHM) == -1)
+    {
+        perror("shm_unlink");
+        exit(1);
+    }
+    printf("All shared memory and semaphores removed successfully\n");
+
+    // free allocated memory
+    free(cargoPlanes);
+    free(collectingCommittees);
+    free(containersPerPlane);
+    free(distributers);
+    free(splitter);
+    printf("All allocated memory freed successfully\n");
 }

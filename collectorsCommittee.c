@@ -5,6 +5,8 @@ void setupSignals();
 void signalHandler(int sig);
 void open_shm_sem();
 void collectContainers();
+void tryToKillWorker();
+void replaceWorker();
 
 // shared data
 int data_shmid;
@@ -25,8 +27,12 @@ sem_t *sem_containers;
 
 int committee_id;
 int committee_size;
+int min_energy;
+int max_energy;
 Collecter **collecters;
 int period;
+int killedWorker = 0;
+int CRITICAL = 0;
 
 int main(int argc, char *argv[])
 {
@@ -37,8 +43,8 @@ int main(int argc, char *argv[])
     }
     committee_id = atoi(argv[1]);
     committee_size = atoi(argv[2]);
-    int min_energy = atoi(argv[3]);
-    int max_energy = atoi(argv[4]);
+    min_energy = atoi(argv[3]);
+    max_energy = atoi(argv[4]);
     int energy_per_trip = atoi(argv[5]);
     collecters = malloc(sizeof(Collecter *) * committee_size);
     period = rand() % (15 - 8 + 1) + 8;
@@ -78,6 +84,7 @@ void collectContainers()
         perror("waitSEM");
         exit(1);
     }
+    CRITICAL = 1;
     int totalLandedContainers = ((SharedData *)data_shm_ptr)->totalLandedContainers;
     int collectedContainers = ((SharedData *)data_shm_ptr)->cleectedContainers;
     int crashedContainers = ((SharedData *)data_shm_ptr)->numOfCrashedContainers;
@@ -134,6 +141,8 @@ void collectContainers()
                 {
                     collecters[i]->energy = 0;
                     collecters[i]->alive = 0;
+                    killedWorker++;
+                    printf("\033[0;31mWorker %d has died\n\033[0m", i);
                 }
             }
         }
@@ -158,31 +167,102 @@ void collectContainers()
         perror("signalSEM");
         exit(1);
     }
+    CRITICAL = 0;
     // printf("Committee %d Unlocked Landed SEM\n", committee_id);
     printf("\033[0;34mEnd Collecting...\n\033[0m");
     fflush(stdout);
+}
+
+void tryToKillWorker()
+{
+    printf("Collecting Committee %d received SIGUSR1, occupaion forces are trying to kill a worker\n", committee_id);
+    if (killedWorker == committee_size)
+    {
+        printf("All workers in committee %d are dead\n", committee_id);
+    }
+    else
+    {
+        int random_worker = rand() % committee_size;
+        while (!collecters[random_worker]->alive)
+        {
+            random_worker = rand() % committee_size;
+        }
+        int energy = collecters[random_worker]->energy;
+        // Generate a random number between 0 and 10000 (100 squared)
+        int chance = rand() % 10001;
+        // Square the worker's energy level
+        int energy_squared = energy * energy;
+        // If the chance is less than the worker's squared energy, the worker survives
+        if (chance < energy_squared)
+        {
+            printf("\033[0;32mWorker %d survived.\n\033[0m", random_worker);
+        }
+        else
+        {
+            collecters[random_worker]->alive = 0;
+            killedWorker++;
+            printf("Worker %d has been killed by the occupation forces\n", random_worker);
+            // notify parent that a worker has been killed
+            kill(getppid(), SIGUSR2);
+        }
+    }
+}
+void replaceWorker()
+{
+    printf("Committee %d received SIGUSR2, killed worker has been replaced\n", committee_id);
+    // find a died worker and make him alive and with new energy level
+    for (int i = 0; i < committee_size; i++)
+    {
+        if (!collecters[i]->alive)
+        {
+            int energy = rand() % (max_energy - min_energy + 1) + min_energy;
+            collecters[i]->energy = energy;
+            collecters[i]->alive = 1;
+            printf("Worker %d has been replaced with energy %d\n", i, energy);
+            killedWorker--;
+            break;
+        }
+    }
 }
 
 void signalHandler(int sig)
 {
     if (sig == SIGALRM)
     {
+        collectContainers();
         /* always update the period, to get a new random order for the committee */
         period = rand() % (15 - 8 + 1) + 8;
-        collectContainers();
         alarm(period);
     }
     else if (sig == SIGUSR1)
     {
-        alarm(period);
+        tryToKillWorker();
+    }
+    else if (sig == SIGUSR2)
+    {
+        replaceWorker();
     }
     else if (sig == SIGTSTP)
     {
         printf("Committee %d received SIGTSTP\n", committee_id);
-        printf("The energy of workers at the end of the day\n");
-        for (int i = 0; i < committee_size; i++)
+        if (CRITICAL == 1)
         {
-            printf("Worker %d | Energy = %d | Alive = %d\n", i, collecters[i]->energy, collecters[i]->alive);
+            if (sem_post(sem_data) == -1)
+            {
+                perror("signalSEM");
+            }
+            if (sem_post(sem_containers) == -1)
+            {
+                perror("signalSEM");
+            }
+            if (sem_post(sem_safe) == -1)
+            {
+                perror("signalSEM");
+            }
+            if (sem_post(sem_stage2) == -1)
+            {
+                perror("signalSEM");
+            }
         }
         // free the allocated memory
         for (int i = 0; i < committee_size; i++)
@@ -192,6 +272,10 @@ void signalHandler(int sig)
         free(collecters);
         printf("Exiting committee\n");
         exit(0);
+    }
+    else
+    {
+        printf("Unknown signal\n");
     }
 }
 
@@ -208,6 +292,11 @@ void setupSignals()
         exit(1);
     }
     if (sigset(SIGTSTP, signalHandler) == SIG_ERR)
+    {
+        perror("sigaction");
+        exit(1);
+    }
+    if (sigset(SIGUSR2, signalHandler) == SIG_ERR)
     {
         perror("sigaction");
         exit(1);
