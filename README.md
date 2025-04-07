@@ -48,8 +48,8 @@ The simulation is configured using the `configuration.txt` file, which includes 
 
 1. Clone the repository:
    ```bash
-   git clone https://github.com/yourusername/aid-distribution-simulation.git
-   cd aid-distribution-simulation
+   git clone https://github.com/Amr-HAlahla/REALTIME-PROJECT2
+   cd REALTIME-PROJECT2
    ```
 
 2. Compile the project using the provided Makefile:
